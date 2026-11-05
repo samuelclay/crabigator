@@ -29,7 +29,7 @@ function card(shot: string, title: string, detail: string): string {
 
 export const cardsHtml = `
         <section class="section extras" id="more" aria-labelledby="extras-title">
-            <h2 id="extras-title">Every session comes with more.<span>Recaps, pull requests, scenes, and an MCP server.</span></h2>
+            <h2 id="extras-title">Every session turbocharged with context.<span>Recaps, pull requests, scenes, and an MCP server.</span></h2>
             <div class="cards">
                 ${card(`<div class="card-term term-capture" style="--cols:${cardCaptures.recap.cols}">${cardCaptures.recap.html}</div>`,
                     'A recap after every turn.', 'Read what changed without scrolling back.')}
