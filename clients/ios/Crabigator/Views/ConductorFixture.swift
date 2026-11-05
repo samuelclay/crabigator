@@ -1,6 +1,35 @@
 #if DEBUG
 import SwiftUI
 
+/// Exercises the real navigation and terminal layout without a desktop or saved credentials.
+struct AdaptiveLayoutFixture: View {
+    @ObservedObject var model: SessionModel
+    var body: some View {
+        RootView(model: model)
+            .onAppear {
+                model.close()
+                model.paired = true
+                model.navigation.conductor = false
+                model.navigation.expanded = true
+                model.preferences = Preferences()
+                model.sessions = ["Add dark mode", "Improve search"].enumerated().map { index, title in
+                    Session(["session_id": "layout-\(index)", "title": title, "repo_owner": "example", "repo_name": "website", "cwd": "/sample/website", "device_name": "Demo computer", "state": "complete", "platform": "codex", "started_at": Int(Date().timeIntervalSince1970), "prompts_changed_at": Int(Date().timeIntervalSince1970), "active": true])
+                }
+                model.prs = []
+                model.rosterStatus = .ready
+                model.ordering.update(model.sessions, prs: [], prefs: model.preferences)
+            }
+            .onChange(of: model.selectionID) { _, id in
+                guard id != nil else { return }
+                model.stream.screen = "Sample session · Layout audit\n\n› Check the adaptive terminal layout.\n\n" + (1...35).map { "  ✓ Sample check \($0) passed" }.joined(separator: "\n") + "\n\nReady for review."
+                model.stream.historyLoaded = true
+                model.stream.screenLoaded = true
+                model.stream.connected = true
+                model.stream.desktopStatusKnown = true
+            }
+    }
+}
+
 @MainActor private final class ConductorFixtureSource {
     private static let news: JSON = ["session_id": "news-session", "project": "NewsBlur", "session_title": "Check app store review", "platform": "Codex", "session_mark": ["glyph": "¬‿¬", "fg_hex": "#AFFFD7", "bg_hex": "#243B35"], "recap": "Checked both store fixtures", "additions": 12, "deletions": 3, "prompts": 4, "session_state": "complete"]
     private static let touch: JSON = ["session_id": "touch-session", "project": "Turn Touch", "session_title": "Prepare the mobile release", "platform": "Claude", "session_mark": ["glyph": "⌬⌬", "fg_hex": "#FFD7AF", "bg_hex": "#443524"]]

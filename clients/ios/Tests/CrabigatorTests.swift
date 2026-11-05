@@ -5,6 +5,22 @@ import UserNotifications
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
+    func testSessionColumnsKeepBothSidesClearOfAnAsymmetricFold() {
+        let fold = CGRect(x: 380, y: 0, width: 24, height: 720)
+        let left = SessionColumns(width: 867, sidebarRight: false, division: fold)
+        XCTAssertEqual(left.sidebar, 380)
+        XCTAssertEqual(left.gap, 24)
+        XCTAssertEqual(left.detail, 463)
+        let right = SessionColumns(width: 867, sidebarRight: true, division: fold)
+        XCTAssertEqual(right.sidebar, 463)
+        XCTAssertEqual(right.detail, 380)
+        let resized = SessionColumns(width: 600, sidebarRight: false)
+        XCTAssertLessThan(resized.sidebar, resized.detail, "A narrower regular-width window must retain room for the terminal")
+        XCTAssertEqual(resized.sidebar + resized.detail + resized.gap, 600)
+        let outside = SessionColumns(width: 350, sidebarRight: false, division: fold)
+        XCTAssertEqual(outside.sidebar + outside.detail + outside.gap, 350, "A fold outside this split-view window must not consume its space")
+    }
+
     func testPreviewChoiceConfirmsOnlyThatPage() throws {
         var prompt: JSON = ["prompt_type": "question", "current_question": 0, "cursor_row": 1,
             "questions": [

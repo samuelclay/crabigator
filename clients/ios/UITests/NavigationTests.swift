@@ -2,6 +2,46 @@ import XCTest
 import UIKit
 
 final class NavigationTests: XCTestCase {
+    func testLayoutRetainsSessionAndDraftAcrossRotation() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment["CRABIGATOR_TEST_LAYOUT"] = "1"
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        app.launch()
+        let sessions = app.buttons.matching(identifier: "Session layout-0")
+        XCTAssertTrue(sessions.firstMatch.waitForExistence(timeout: 10))
+        try XCTUnwrap(sessions.allElementsBoundByIndex.first { $0.isHittable }).tap()
+        let terminal = app.textViews["terminal-output"]
+        XCTAssertTrue(terminal.waitForExistence(timeout: 5))
+        let selected = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Selected session ")).firstMatch
+        XCTAssertTrue(selected.waitForExistence(timeout: 5))
+        let selectedID = selected.identifier
+        let message = app.textViews["Message"]
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        message.tap()
+        message.typeText("Keep this draft through resizing")
+        capture("Adaptive layout portrait keyboard")
+        for orientation in [UIDeviceOrientation.landscapeLeft, .portrait, .landscapeRight, .portrait] {
+            let oldFrame = terminal.frame
+            XCUIDevice.shared.orientation = orientation
+            let resized = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                terminal.exists && terminal.frame != oldFrame
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [resized], timeout: 10), .completed)
+            let draft = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Keep this draft through resizing"), object: message)
+            XCTAssertEqual(XCTWaiter.wait(for: [draft], timeout: 5), .completed)
+            XCTAssertTrue(app.staticTexts[selectedID].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["Style"].isHittable, "The trailing control must remain tappable after resizing")
+            XCTAssertTrue(app.buttons["Terminal keys"].isHittable)
+            XCTAssertTrue(terminal.exists)
+            capture("Adaptive layout \(orientation.rawValue) keyboard")
+        }
+        app.buttons["Terminal keys"].tap()
+        XCTAssertTrue(app.buttons["Esc"].waitForExistence(timeout: 5))
+        capture("Adaptive terminal keyboard")
+    }
+
     func testFullPageSwipeWhileLoading() throws {
         let app = try openSession(holdLoading: true)
         XCTAssertTrue(app.activityIndicators["session-loading"].waitForExistence(timeout: 5))

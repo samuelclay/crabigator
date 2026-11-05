@@ -1,7 +1,7 @@
 import SwiftUI
 
 extension View {
-    func nativePopover() -> some View { self.frame(width: 330, height: 480).presentationCompactAdaptation(.popover).preferredColorScheme(.dark) }
+    func nativePopover() -> some View { self.frame(idealWidth: 330, maxWidth: 330, idealHeight: 480, maxHeight: 480).presentationCompactAdaptation(.popover).preferredColorScheme(.dark) }
 }
 struct StyleMenu: View {
     @ObservedObject var model: SessionModel

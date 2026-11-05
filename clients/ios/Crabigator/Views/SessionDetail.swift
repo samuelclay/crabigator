@@ -20,16 +20,9 @@ struct SessionDetail: View {
         GeometryReader { geometry in
             if let session = stream.selected {
                 let modules = SessionModuleData(session: session, details: stream.details)
+                let tabletop = hasHorizontalFold(in: geometry)
                 VStack(spacing: 0) {
-                    HStack(spacing: 2) {
-                        IconButton(icon: wide ? "xmark" : "chevron.left", label: wide ? "Close session" : "Back to list", action: close)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(session.title).font(.system(size: 15, weight: .medium)).foregroundStyle(Crab.title).lineLimit(2).accessibilityIdentifier("Selected session \(session.id)")
-                            Text(stream.connected ? "\(session.machine) · Live" : !session.active ? "\(session.machine) · Ended" : stream.desktopStatusKnown ? "\(session.machine) · Disconnected" : "Connecting…").font(.system(size: 11)).foregroundStyle(stream.connected ? Crab.mint : Crab.muted).lineLimit(1)
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                        IconButton(icon: "arrow.down.to.line", label: pinned ? "Stop following output" : "Follow latest output", selected: pinned) { pinned.toggle() }
-                        IconButton(icon: "textformat.size", label: "Style") { style = true }.popover(isPresented: $style, arrowEdge: .top) { StyleMenu(model: model).nativePopover() }
-                    }.padding(.horizontal, 4).padding(.vertical, 8)
+                    if !tabletop { header(session) }
                     Divider()
                     if let error = stream.error { HStack { Text(error).font(.caption).foregroundStyle(Crab.red); Spacer(); IconButton(icon: "xmark", label: "Dismiss session error") { stream.error = nil } }.padding(.leading, 12) }
                     GeometryReader { area in
@@ -82,12 +75,30 @@ struct SessionDetail: View {
 
                         }
                     }
+                    if tabletop { header(session) }
                     PromptTransition(prompt: stream.prompt, revision: stream.revision, disabled: stream.sending || !stream.connected || stream.revision == nil) { action, revision in stream.send(action, guarded: true, expectedRevision: revision) }.id(session.id)
                     SessionComposer(stream: stream, model: model, sessionID: session.id, active: active).id(session.id)
                 }.background(Crab.ink).offset(x: drag).clipped()
                     .task(id: session.id) { pinned = true; drag = 0; loadingSlowly = false; try? await Task.sleep(for: .seconds(8)); if !Task.isCancelled { loadingSlowly = true } }
             }
         }.background(Crab.ink)
+    }
+    private func hasHorizontalFold(in geometry: GeometryProxy) -> Bool {
+        if #available(iOS 27.1, *) {
+            return geometry.reservedRegions(kind: .division).contains { $0.frame.width > $0.frame.height }
+        }
+        return false
+    }
+    private func header(_ session: Session) -> some View {
+        HStack(spacing: 2) {
+            IconButton(icon: wide ? "xmark" : "chevron.left", label: wide ? "Close session" : "Back to list", action: close)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(session.title).font(.system(size: 15, weight: .medium)).foregroundStyle(Crab.title).lineLimit(2).accessibilityIdentifier("Selected session \(session.id)")
+                Text(stream.connected ? "\(session.machine) · Live" : !session.active ? "\(session.machine) · Ended" : stream.desktopStatusKnown ? "\(session.machine) · Disconnected" : "Connecting…").font(.system(size: 11)).foregroundStyle(stream.connected ? Crab.mint : Crab.muted).lineLimit(1)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            IconButton(icon: "arrow.down.to.line", label: pinned ? "Stop following output" : "Follow latest output", selected: pinned) { pinned.toggle() }
+            IconButton(icon: "textformat.size", label: "Style") { style = true }.popover(isPresented: $style, arrowEdge: .top) { StyleMenu(model: model).nativePopover() }
+        }.padding(.horizontal, 4).padding(.vertical, 8)
     }
     func expandedDrawerHeight(_ available: CGFloat) -> CGFloat {
         min(modulesHeight, max(0, available - 44) * 0.45)

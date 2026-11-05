@@ -23,7 +23,9 @@ import UserNotifications
     }
     @ViewBuilder private var content: some View {
         #if DEBUG
-        if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_DEMO"] == "1" {
+        if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_LAYOUT"] == "1" {
+            AdaptiveLayoutFixture(model: model)
+        } else if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_DEMO"] == "1" {
             DemoView()
         } else if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_QUESTIONS"] == "1" {
             QuestionTransitionFixture()
@@ -103,6 +105,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 }
 struct RootView: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var conductor: ConductorModel
     @ObservedObject var model: SessionModel
     @State private var outgoing: SessionStream?
@@ -120,18 +123,18 @@ struct RootView: View {
                 ScrollView { VStack(alignment: .leading, spacing: 24) { BrandHeader(); PairingFields(model: model) }.frame(maxWidth: 430).padding(28).frame(maxWidth: .infinity) }.defaultScrollAnchor(.center)
             } else {
                 GeometryReader { geometry in
-                    let wide = geometry.size.width >= 720, width = wide ? geometry.size.width - 361 : geometry.size.width
-                    if !wide {
+                    let columns = columns(in: geometry)
+                    if horizontalSizeClass != .regular {
                         PhoneNavigation(model: model, listMode: $model.navigation.listMode, expanded: $model.navigation.expanded)
                     } else {
                         ZStack(alignment: model.preferences.sidebarRight ? .trailing : .leading) {
                             HStack(spacing: 0) {
-                                if !model.preferences.sidebarRight { Spacer().frame(width: 361) }
-                                detail(wide: true, width: width).frame(maxWidth: .infinity)
-                                if model.preferences.sidebarRight { Spacer().frame(width: 361) }
+                                if !model.preferences.sidebarRight { Spacer().frame(width: columns.sidebar + columns.gap) }
+                                detail(wide: true, width: columns.detail).frame(maxWidth: .infinity)
+                                if model.preferences.sidebarRight { Spacer().frame(width: columns.sidebar + columns.gap) }
                             }
-                            BoardView(model: model, listMode: $model.navigation.listMode, expanded: $model.navigation.expanded, wide: true) { session, order in select(session, order: order, width: width) }
-                                .frame(width: model.navigation.expanded ? geometry.size.width : 360)
+                            BoardView(model: model, listMode: $model.navigation.listMode, expanded: $model.navigation.expanded, wide: true) { session, order in select(session, order: order, width: columns.detail) }
+                                .frame(width: model.navigation.expanded ? geometry.size.width : columns.sidebar)
                                 .animation(.easeInOut(duration: 0.36), value: model.navigation.expanded)
                         }.clipped()
                     }
@@ -142,6 +145,14 @@ struct RootView: View {
             .allowsHitTesting(!(model.paired && model.navigation.conductor))
             .accessibilityHidden(model.paired && model.navigation.conductor)
             .overlay { if model.paired && model.navigation.conductor { ConductorView(model: model, conductor: conductor) } }
+    }
+    private func columns(in geometry: GeometryProxy) -> SessionColumns {
+        if #available(iOS 27.1, *), let fold = geometry.reservedRegions(kind: .division).first(where: { $0.frame.height > $0.frame.width }) {
+            let frame = CGRect(x: fold.frame.minX - fold.margins.leading, y: fold.frame.minY,
+                               width: fold.frame.width + fold.margins.leading + fold.margins.trailing, height: fold.frame.height)
+            return SessionColumns(width: geometry.size.width, sidebarRight: model.preferences.sidebarRight, division: frame)
+        }
+        return SessionColumns(width: geometry.size.width, sidebarRight: model.preferences.sidebarRight)
     }
     @ViewBuilder func detail(wide: Bool, width: CGFloat) -> some View {
         ZStack {
@@ -169,5 +180,20 @@ struct RootView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) { if navigation == epoch { outgoing = nil } }
             }
         } else { withAnimation(.easeInOut(duration: 0.36)) { model.navigation.expanded = false } }
+    }
+}
+
+/// Column sizes use the space offered to the view, which already excludes safe areas.
+struct SessionColumns {
+    let sidebar: CGFloat, gap: CGFloat, detail: CGFloat
+    init(width: CGFloat, sidebarRight: Bool, division: CGRect? = nil) {
+        if let division, division.minX > 0, division.maxX < width {
+            sidebar = sidebarRight ? width - division.maxX : division.minX
+            gap = division.width
+        } else {
+            sidebar = min(360, max(0, width - 1) * 0.42)
+            gap = min(1, width)
+        }
+        detail = max(0, width - sidebar - gap)
     }
 }

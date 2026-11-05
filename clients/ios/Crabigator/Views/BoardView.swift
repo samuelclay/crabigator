@@ -15,33 +15,60 @@ struct BoardView: View {
     var spacingAnimation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.3) }
     var floatingToolbar: Bool { wide && expanded }
     var body: some View {
-        VStack(spacing: 0) {
-            Color.clear.frame(height: floatingToolbar && model.preferences.groupByComputer && !searching ? 0 : 60).animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
-            if searching { TextField("Search", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, 12).padding(.bottom, 8).accessibilityIdentifier("Search sessions") }
-            if model.sessions.isEmpty && model.prs.isEmpty {
-                Spacer()
-                switch model.rosterStatus {
-                case .loading: ProgressView().tint(Crab.orange).accessibilityLabel("Loading sessions")
-                case .failed: Button("Retry") { Task { await model.refresh() } }.buttonStyle(.bordered)
-                case .ready: VStack(spacing: 16) { Text("No sessions").foregroundStyle(Crab.muted); PairingFields(model: model) }.padding(24)
-                }
-                Spacer()
-            } else {
-                GeometryReader { geometry in
-                    ZStack {
-                        boardContent(list: true, width: geometry.size.width).opacity(listMode ? 1 : 0).allowsHitTesting(listMode).accessibilityHidden(!listMode)
-                        boardContent(list: false, width: geometry.size.width).opacity(listMode ? 0 : 1).allowsHitTesting(!listMode).accessibilityHidden(listMode)
+        GeometryReader { geometry in
+            let controlWidth = controlRegionWidth(in: geometry)
+            let avoidsFold = controlWidth < geometry.size.width
+            let tabletop = hasHorizontalFold(in: geometry)
+            VStack(spacing: 0) {
+                Color.clear.frame(height: tabletop || floatingToolbar && model.preferences.groupByComputer && !searching && !avoidsFold ? 0 : 60).animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
+                if searching { TextField("Search", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, 12).padding(.bottom, 8).frame(width: controlWidth).frame(maxWidth: .infinity, alignment: .trailing).accessibilityIdentifier("Search sessions") }
+                if model.sessions.isEmpty && model.prs.isEmpty {
+                    Spacer()
+                    switch model.rosterStatus {
+                    case .loading: ProgressView().tint(Crab.orange).accessibilityLabel("Loading sessions")
+                    case .failed: Button("Retry") { Task { await model.refresh() } }.buttonStyle(.bordered)
+                    case .ready: VStack(spacing: 16) { Text("No sessions").foregroundStyle(Crab.muted); PairingFields(model: model) }.padding(24)
                     }
-                }.environment(\.boardTextSize, CGFloat(model.preferences.boardTextSize)).environment(\.boardSpacing, spacing)
-            }
-        }.background(Crab.ink)
-            .overlay(alignment: .top) {
-                header.frame(maxWidth: floatingToolbar ? 276 : .infinity)
-                    .contentShape(Rectangle()).simultaneousGesture(TapGesture().onEnded {})
-                    .background { if floatingToolbar { Capsule().fill(.ultraThinMaterial).overlay(Capsule().strokeBorder(Color.white.opacity(0.12))).shadow(color: .black.opacity(0.25), radius: 8, y: 3) } }
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
-            }
-            .overlay(alignment: .bottom) { footer.padding(.bottom, 16) }
+                    Spacer()
+                } else {
+                    GeometryReader { geometry in
+                        ZStack {
+                            boardContent(list: true, width: geometry.size.width, bottomInset: tabletop ? 148 : 88).opacity(listMode ? 1 : 0).allowsHitTesting(listMode).accessibilityHidden(!listMode)
+                            boardContent(list: false, width: geometry.size.width, bottomInset: tabletop ? 148 : 88).opacity(listMode ? 0 : 1).allowsHitTesting(!listMode).accessibilityHidden(listMode)
+                        }
+                    }.environment(\.boardTextSize, CGFloat(model.preferences.boardTextSize)).environment(\.boardSpacing, spacing)
+                }
+            }.background(Crab.ink)
+                .overlay(alignment: tabletop ? .bottom : .top) {
+                    header.frame(maxWidth: floatingToolbar ? 276 : .infinity)
+                        .contentShape(Rectangle()).simultaneousGesture(TapGesture().onEnded {})
+                        .background { if floatingToolbar { Capsule().fill(.ultraThinMaterial).overlay(Capsule().strokeBorder(Color.white.opacity(0.12))).shadow(color: .black.opacity(0.25), radius: 8, y: 3) } }
+                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
+                        .frame(width: controlWidth)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .frame(height: 60)
+                        .background { if tabletop && !floatingToolbar { Crab.ink } }
+                        .padding(.bottom, tabletop ? 76 : 0)
+                }
+                .overlay(alignment: .bottom) {
+                    footer.frame(width: controlWidth)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.bottom, 16)
+                }
+        }
+    }
+    private func hasHorizontalFold(in geometry: GeometryProxy) -> Bool {
+        if #available(iOS 27.1, *) {
+            return geometry.reservedRegions(kind: .division).contains { $0.frame.width > $0.frame.height }
+        }
+        return false
+    }
+    private func controlRegionWidth(in geometry: GeometryProxy) -> CGFloat {
+        if #available(iOS 27.1, *), let fold = geometry.reservedRegions(kind: .division).first(where: { $0.frame.height > $0.frame.width }),
+           fold.frame.minX > 0, fold.frame.maxX < geometry.size.width {
+            return geometry.size.width - fold.frame.maxX - fold.margins.trailing
+        }
+        return geometry.size.width
     }
     var header: some View {
         HStack(spacing: 4) {
@@ -68,7 +95,7 @@ struct BoardView: View {
             return copy.sessions.isEmpty ? nil : copy
         }
     }
-    func boardContent(list: Bool, width: CGFloat) -> some View {
+    func boardContent(list: Bool, width: CGFloat, bottomInset: CGFloat) -> some View {
         let byPR = !list && model.preferences.boardGrouping == "prs"
         let now = Int(Date().timeIntervalSince1970)
         let filtered = sections(list, includeAge: !byPR)
@@ -145,7 +172,7 @@ struct BoardView: View {
                     if sections.isEmpty && (list || !model.ordering.watched.contains { $0.matches(query) && model.preferences.includesActivity(max($0.updatedAt, $0.closedAt, $0.mentionedAt), now: Int(Date().timeIntervalSince1970)) }) { Text("No sessions match your filters").foregroundStyle(Crab.muted).padding(24) }
                 // Lazy rows must discard cached wide/narrow geometry in both directions.
                 }.id(!list && width >= 840).transition(.identity)
-                    .padding(.horizontal, 12).padding(.bottom, 88)
+                    .padding(.horizontal, 12).padding(.bottom, bottomInset)
             }.refreshable { await model.refresh() }
         }.animation(spacingAnimation, value: model.preferences.density)
     }

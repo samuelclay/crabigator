@@ -232,7 +232,7 @@ import OSLog
     var origin: String { api.credentials.connection().origin }
     func start() {
         #if DEBUG
-        if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_CONDUCTOR_ROSTER"] == "1" { return }
+        if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_CONDUCTOR_ROSTER"] == "1" || ProcessInfo.processInfo.environment["CRABIGATOR_TEST_LAYOUT"] == "1" { return }
         #endif
         foreground = true; stream.foreground = true
         guard paired, polling == nil else { return }
