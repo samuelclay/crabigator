@@ -36,7 +36,7 @@ export const cardsHtml = `
                 ${card(`<div class="card-term term-capture" style="--cols:${cardCaptures.prs.cols}">${cardCaptures.prs.html}</div>`,
                     'Pull requests, tracked.', 'Each session lists the pull requests it touched, with their status.')}
                 ${card(`<div class="card-scenes">${scenes}</div>`,
-                    'A scene for every session.', 'Fifteen scenes, each moving with the work.')}
+                    'A scene for every session.', 'Fifteen scenes, each moving with the work. <a href="https://github.com/robdmac/flow" target="_blank" rel="noopener" title="flow by Rob Macrae, on GitHub">Adapted from flow</a>')}
                 ${card(`<div class="card-mcp"><code>wait_for_attention ${JSON.stringify(waiting.args)}</code><pre>${highlightJson({
                     timed_out: false,
                     sessions: [{ title: waitingSession.title, state: waitingSession.state, device_name: waitingSession.device_name }],
