@@ -4,6 +4,7 @@ import {
 } from './icons';
 import { appModulesHtml, contextLabel, contextPercent, type SessionValues } from './app-modules';
 import { flowScenes } from './flow-scenes';
+import { androidCapture } from './desktop-capture';
 
 // Static product illustrations. Keep them out of the tab order: the actual
 // dashboard link lives above the preview, and none of these controls are live.
@@ -120,5 +121,19 @@ export const webPreviewHtml = `
                 <div class="web-preview-changes"><span>⎇ main</span><span>6 files changed</span><span>header.css</span><span>layout.css</span><span>session-card.css</span><span class="preview-add">+20</span><span class="preview-del">−75</span></div>
             </div>
         </div>
+    </div>
+</div>`;
+
+// Crabigator's Android app (SessionDetail.kt): the same session layout as on
+// iPhone, in an Android frame with its status bar and gesture bar.
+export const androidPreviewHtml = `
+<div class="android-frame" role="img" aria-label="Crabigator's Android app showing a Claude Code session that summarized two pull requests: its terminal, then the session's recap, its pull requests, an engine scene, and its stats with the context window.">
+    <div class="android-screen" aria-hidden="true">
+        <div class="android-status"><span>9:41</span><i class="android-camera"></i><span class="phone-indicators"><span class="signal-bars"><i></i><i></i><i></i><i></i></span>${iconWifi}<span class="phone-battery"></span></span></div>
+        <div class="android-app-bar"><span class="android-back">←</span><div><strong>Crabigator PRs 5 and 6</strong><span>ClayBook · Live</span></div><span class="android-control selected">↓</span><span class="android-control">Aa</span></div>
+        <div class="phone-terminal">${androidCapture.phoneHtml}</div>
+        ${appModulesHtml(androidCapture.session, flowScenes.android, { cols: 18, rows: 5 })}
+        <div class="phone-composer">${iconMicrophone}${iconKeyboard}<span>Message</span></div>
+        <div class="android-nav"><span></span></div>
     </div>
 </div>`;

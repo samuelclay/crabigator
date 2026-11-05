@@ -6,7 +6,7 @@ import { notificationPreviewHtml, notificationCss, notificationJs } from './land
 import { devicePairHtml } from './landing/device-pair';
 import { flowPlayerJs } from './landing/flow-player';
 import { claimsHtml, cardsHtml } from './landing/features';
-import { tabletPreviewHtml, webPreviewHtml } from './landing/product-previews';
+import { tabletPreviewHtml, webPreviewHtml, androidPreviewHtml } from './landing/product-previews';
 import { productPreviewsCss } from './landing/product-previews-css';
 import { homeCss } from './landing/home-css';
 import { heroStreamCss, heroStreamJs } from './landing/hero-stream';
@@ -112,6 +112,7 @@ export const landingHtml = `<!DOCTYPE html>
             <div class="surface-tabs" role="tablist" aria-label="Screens" hidden>
                 <button type="button" role="tab" id="tab-iphone" aria-controls="panel-iphone" aria-selected="true">iPhone</button>
                 <button type="button" role="tab" id="tab-ipad" aria-controls="panel-ipad" aria-selected="false" tabindex="-1">iPad</button>
+                <button type="button" role="tab" id="tab-android" aria-controls="panel-android" aria-selected="false" tabindex="-1">Android</button>
                 <button type="button" role="tab" id="tab-web" aria-controls="panel-web" aria-selected="false" tabindex="-1">Web</button>
             </div>
             <div class="surface-panel" id="panel-iphone" role="tabpanel" aria-labelledby="tab-iphone">
@@ -121,6 +122,10 @@ export const landingHtml = `<!DOCTYPE html>
             <div class="surface-panel" id="panel-ipad" role="tabpanel" aria-labelledby="tab-ipad">
                 <p class="surface-claim"><strong>Read, scroll back, and reply.</strong> Type or speak your next instruction.</p>
                 <figure class="tablet-preview">${tabletPreviewHtml}</figure>
+            </div>
+            <div class="surface-panel" id="panel-android" role="tabpanel" aria-labelledby="tab-android">
+                <p class="surface-claim"><strong>Android, too.</strong> The same terminal, modules, and replies.</p>
+                <figure class="android-preview">${androidPreviewHtml}</figure>
             </div>
             <div class="surface-panel" id="panel-web" role="tabpanel" aria-labelledby="tab-web">
                 <p class="surface-claim"><strong>Every session in a browser tab.</strong> Nothing to install. <a href="/dashboard" data-track="dashboard_cta" data-label="web_section">Open the dashboard</a></p>

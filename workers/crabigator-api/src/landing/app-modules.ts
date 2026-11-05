@@ -1,4 +1,4 @@
-// The native apps' session modules: the open drawer (Recap, Git, Changes)
+// The native apps' session modules: the open drawer (Recap, Pull requests, Git, Changes)
 // beside a flow scene, then the summary bar. Matches SessionModules.swift and
 // SessionSummaryBar on iOS. The hero passes a captured session's real values.
 
@@ -14,6 +14,8 @@ export interface SessionValues {
     files: number;
     symbols: number;
     recap: string;
+    /** Pull requests the session touched: how many, and their states ("2 merged"). */
+    prs?: { count: number; summary: string };
     /** Working shows the app's moving dots; asking, its filled "?" badge. Otherwise complete. */
     state?: 'working' | 'asking';
     /** Wide layouts (iPad) show these too, as the app does when they fit. */
@@ -51,7 +53,12 @@ export function markChip(mark: SessionValues['mark'], className: string): string
 }
 
 function moduleRows(session: SessionValues): number {
-    return 1 + (session.recap ? 1 : 0) + (session.symbols ? 1 : 0);
+    return [session.recap, session.prs, hasGit(session), session.symbols].filter(Boolean).length;
+}
+
+/** The app hides Git when it knows neither a branch nor a changed file. */
+function hasGit(session: SessionValues): boolean {
+    return Boolean(session.branch || session.files);
 }
 
 const STATUS = {
@@ -81,7 +88,8 @@ export function appModulesHtml(session: SessionValues, flowSvg: string, flowSize
         <div class="app-drawer">
             <div class="app-module-rows">
                 ${session.recap ? `<div class="app-module recap"><i>›</i><b>Recap</b><span>${session.recap}</span><small>now</small></div>` : ''}
-                <div class="app-module git"><i>›</i><b>Git</b><span>${session.branch}</span><small>${plural(session.files, 'file')}</small></div>
+                ${session.prs ? `<div class="app-module prs"><i>›</i><b>Pull requests</b><span>${plural(session.prs.count, 'PR')} · ${session.prs.summary}</span></div>` : ''}
+                ${hasGit(session) ? `<div class="app-module git"><i>›</i><b>Git</b><span>${session.branch}</span><small>${plural(session.files, 'file')}</small></div>` : ''}
                 ${session.symbols ? `<div class="app-module changes"><i>›</i><b>Changes</b><span>${plural(session.symbols, 'symbol')}</span></div>` : ''}
             </div>
             <div class="app-flow"${flowSize ? ` style="width:calc(var(--module-size) * ${3.67 * moduleRows(session)} * ${(flowSize.cols * .6 / (flowSize.rows * 1.45)).toFixed(4)})"` : ''}>${flowSvg}</div>

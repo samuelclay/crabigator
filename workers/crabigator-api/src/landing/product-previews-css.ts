@@ -52,6 +52,21 @@ export const productPreviewsCss = `
 .tablet-detail .preview-composer > span { box-shadow: inset 0 0 0 1px #ffffff22; }
 .tablet-detail .app-modules { --module-size: 1.05cqw; --flow-width: 22cqw; }
 .app-summary .app-preview { margin-left: auto; color: #8a8a8a; }.app-summary .c-red { color: #ff5f5f; }.app-preview + .app-open { margin-left: 0; }
+.android-preview { display: flex; justify-content: center; padding: 48px 32px; background: #1b2731; border-radius: 12px; }
+.android-frame { container-type: inline-size; width: min(330px, 100%); aspect-ratio: 1 / 2.16; padding: 7px; background: #050608; border: 2px solid #3a434b; border-radius: 30px; box-shadow: 0 24px 60px #0006; }
+.android-screen { display: flex; flex-direction: column; width: 100%; height: 100%; overflow: hidden; border-radius: 23px; background: #0d131b; font-family: Roboto, 'DM Sans', sans-serif; }
+.android-status { position: relative; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; height: 9cqw; padding: 0 6cqw; color: #edf1f4; font: 500 3.7cqw Roboto, 'DM Sans', sans-serif; }
+.android-camera { position: absolute; left: 50%; top: 2.3cqw; width: 4.4cqw; height: 4.4cqw; margin-left: -2.2cqw; border-radius: 50%; background: #000; box-shadow: 0 0 0 .6cqw #151a20; }
+.android-app-bar { display: flex; align-items: center; gap: 2cqw; flex-shrink: 0; padding: 2cqw 3cqw 3cqw; border-bottom: 1px solid #303a46; }
+.android-back { width: 8cqw; color: #e9eef4; font-size: 6cqw; text-align: center; }
+.android-app-bar > div { flex: 1; min-width: 0; }
+.android-app-bar strong { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #65b1f7; font-size: 4.3cqw; font-weight: 500; }
+.android-app-bar div > span { display: block; margin-top: .6cqw; color: #8bd78d; font-size: 3.2cqw; }
+.android-control { display: flex; align-items: center; justify-content: center; width: 9cqw; height: 9cqw; border-radius: 50%; color: #a8b1ba; font-size: 4.2cqw; }
+.android-control.selected { background: #d7af5f1f; color: #d7af5f; }
+.android-nav { display: flex; justify-content: center; flex-shrink: 0; padding: 2.6cqw 0 2.2cqw; }
+.android-nav span { width: 30%; height: 1.1cqw; border-radius: 1cqw; background: #edf1f4b3; }
+.android-frame .app-modules { --module-size: 2.85cqw; --flow-width: 36%; }
 .tablet-home { display: flex; justify-content: center; padding: .7cqw 0 .5cqw; }.tablet-home > span { width: 22%; height: .35cqw; background: #b5bdc4; border-radius: 1cqw; }
 .web-product { container-type: inline-size; }
 .web-product .browser-bar { font-size: 1cqw; padding: 1cqw 1.4cqw; }.web-product .browser-bar > span:last-child { font-size: .9cqw; padding: .35cqw 2cqw; }.web-product .window-dots i { width: .6cqw; height: .6cqw; }
