@@ -153,7 +153,7 @@ ${cardsHtml}
             </div>
         </section>
         <section class="section updates" id="mobile">
-            <div><h2>Keep in touch.<span>News about the mobile apps.</span></h2></div>
+            <div><h2>Keep in touch.<span>Hear about latest releases.</span></h2></div>
             <form class="email-form" id="email-form">
                 <label class="sr-only" for="updates-email">Email address</label>
                 <input id="updates-email" name="email" type="email" placeholder="you@example.com" autocomplete="email" required>
