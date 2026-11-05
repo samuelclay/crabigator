@@ -49,8 +49,9 @@ export const landingHtml = `<!DOCTYPE html>
     <header class="site-header">
         <a class="wordmark" href="/" aria-label="Crabigator home">${iconCrabigatorLogo}</a>
         <nav aria-label="Main navigation">
-            <a href="#native">Apps</a>
-            <a href="#web">Web</a>
+            <a href="#claude-code">Claude Code</a>
+            <a href="#codex">Codex</a>
+            <a href="#apps">Apps</a>
             <a href="#install">Install</a>
             <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener">GitHub</a>
             <a class="dashboard-link" href="/dashboard" data-track="dashboard_nav" data-label="nav">Open dashboard</a>
@@ -105,35 +106,25 @@ export const landingHtml = `<!DOCTYPE html>
             })}
         </section>
 
-        <section class="native section" id="native">
-            <div class="story-heading">
-                <h2>The terminal you know.<br>Made for your hands.</h2>
-                <div><p>Native apps for your phone and tablet. Read the live terminal, scroll back, and type or speak your next instruction.</p><p class="availability">iOS and Android apps in development.</p></div>
+        <section class="section surfaces" id="apps" aria-labelledby="surfaces-title">
+            <h2 id="surfaces-title">Your sessions,<span>on every screen.</span></h2>
+            <div class="surface-tabs" role="tablist" aria-label="Screens" hidden>
+                <button type="button" role="tab" id="tab-iphone" aria-controls="panel-iphone" aria-selected="true">iPhone</button>
+                <button type="button" role="tab" id="tab-ipad" aria-controls="panel-ipad" aria-selected="false" tabindex="-1">iPad</button>
+                <button type="button" role="tab" id="tab-web" aria-controls="panel-web" aria-selected="false" tabindex="-1">Web</button>
             </div>
-            <figure class="tablet-preview">
-                ${tabletPreviewHtml}
-                <figcaption>Crabigator on iPad</figcaption>
-            </figure>
-        </section>
-
-        <section class="notifications section" id="notifications">
-            <div class="notification-copy">
-                <h2>A tap.<br>And it’s moving again.</h2>
-                <p>When your agent needs a decision, answer from the notification. No trip back to your desk.</p>
-                <p class="availability">Native app notifications</p>
+            <div class="surface-panel" id="panel-iphone" role="tabpanel" aria-labelledby="tab-iphone">
+                <p class="surface-claim"><strong>Answer from the notification.</strong> The iOS and Android apps are in development.</p>
+                <figure class="notification-preview">${notificationPreviewHtml}</figure>
             </div>
-            <figure class="notification-preview">${notificationPreviewHtml}</figure>
-        </section>
-
-        <section class="web section" id="web">
-            <div class="story-heading">
-                <h2>Or open a browser.</h2>
-                <div><p>The web dashboard puts sessions, pull requests, and terminal controls in one place. Use it from any device, without installing an app.</p><a class="text-link" href="/dashboard" data-track="dashboard_cta" data-label="web_section">Open web dashboard</a></div>
+            <div class="surface-panel" id="panel-ipad" role="tabpanel" aria-labelledby="tab-ipad">
+                <p class="surface-claim"><strong>Read, scroll back, and reply.</strong> Type or speak your next instruction.</p>
+                <figure class="tablet-preview">${tabletPreviewHtml}</figure>
             </div>
-            <figure class="web-preview">
-                ${webPreviewHtml}
-                <figcaption>Web dashboard</figcaption>
-            </figure>
+            <div class="surface-panel" id="panel-web" role="tabpanel" aria-labelledby="tab-web">
+                <p class="surface-claim"><strong>Every session in a browser tab.</strong> Nothing to install. <a href="/dashboard" data-track="dashboard_cta" data-label="web_section">Open the dashboard</a></p>
+                <figure class="web-preview">${webPreviewHtml}</figure>
+            </div>
         </section>
 
         ${mcpLandingSectionHtml()}

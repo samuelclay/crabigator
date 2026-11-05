@@ -24,6 +24,33 @@ document.querySelectorAll('[data-copy-target]').forEach(function(button) {
         }
     });
 });
+// Screen tabs: without JavaScript every panel shows, one after another.
+const tablist = document.querySelector('.surface-tabs');
+if (tablist) {
+    const tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
+    function select(tab, focus) {
+        tabs.forEach(function(other) {
+            const selected = other === tab;
+            other.setAttribute('aria-selected', String(selected));
+            other.tabIndex = selected ? 0 : -1;
+            document.getElementById(other.getAttribute('aria-controls')).hidden = !selected;
+        });
+        if (focus) tab.focus();
+    }
+    tabs.forEach(function(tab, index) {
+        tab.addEventListener('click', function() { select(tab, false); });
+        tab.addEventListener('keydown', function(event) {
+            const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+            if (event.key === 'Home') select(tabs[0], true);
+            else if (event.key === 'End') select(tabs[tabs.length - 1], true);
+            else if (step) select(tabs[(index + step + tabs.length) % tabs.length], true);
+            else return;
+            event.preventDefault();
+        });
+    });
+    tablist.hidden = false;
+    select(tabs[0], false);
+}
 const emailForm = document.getElementById('email-form');
 if (emailForm) {
     emailForm.addEventListener('submit', function(event) {

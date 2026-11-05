@@ -115,17 +115,18 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .pair-phone .phone-app-bar strong { font-size: 4.4cqw; color: #65b1f7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pair-phone .phone-app-bar div { min-width: 0; }
 .section h2 { font-size: clamp(32px, 3.4vw, 48px); line-height: 1.14; letter-spacing: -.045em; font-weight: 450; }
-.story-heading { display: flex; align-items: end; justify-content: space-between; gap: 64px; margin-bottom: 46px; }
-.story-heading > div { max-width: 340px; }
-.story-heading p, .notification-copy > p { color: var(--muted); }
-.availability { font-size: 12px; margin-top: 18px; }
-.native { padding-top: 45px; }
 .tablet-frame { padding: 12px; border: 2px solid #52616b; border-radius: 30px; background: #070b0e; box-shadow: 0 20px 70px #0003; }
-.tablet-preview figcaption, .web-preview figcaption { margin-top: 18px; color: var(--muted); font-size: 12px; }
-.notifications { display: grid; grid-template-columns: 1fr 1fr; gap: 100px; align-items: center; }
-.notification-copy > p { max-width: 310px; margin-top: 26px; }
-.notification-copy > .availability { margin-top: 18px; }
-.notification-preview { display: flex; justify-content: center; padding: 40px 32px; background: #25343e; border-radius: 12px; }
+.surfaces > h2 { text-align: center; }
+.surface-tabs { display: flex; width: max-content; margin: 34px auto 0; padding: 4px; border: 1px solid var(--line); border-radius: 999px; }
+.surface-tabs[hidden] { display: none; }
+.surface-tabs button { padding: 8px 22px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 15px; }
+.surface-tabs button[aria-selected="true"] { background: var(--ink); color: var(--paper); }
+.surface-panel { margin-top: 34px; }
+.surface-panel[hidden] { display: none; }
+.surface-claim { margin-bottom: 30px; color: var(--muted); text-align: center; font-size: 17px; }
+.surface-claim strong { color: var(--ink); font-weight: 550; }
+.surface-claim a { margin-left: 6px; color: var(--peach); }
+.notification-preview { display: flex; justify-content: center; padding: 48px 32px; background: #1b2731; border-radius: 12px; }
 .notification-phone { width: min(340px, 100%); }
 .notification-phone .phone-screen { position: relative; }
 .notification-app { display: flex; flex-direction: column; flex: 1; min-height: 0; filter: blur(.45cqw) brightness(.7); }
@@ -142,7 +143,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .notification-menu { top: 117cqw; right: 40cqw; display: flex; flex-direction: column; padding: 1.5cqw 0; border-radius: 6cqw; background: #e9e9ebe8; box-shadow: 0 2cqw 8cqw #0006; color: #111; font-size: 4.4cqw; }
 .notification-menu span { padding: 2.6cqw 6cqw; }
 .notification-menu span + span { border-top: .5px solid #0000001a; }
-.text-link { display: inline-block; margin-top: 24px; color: var(--peach); font-size: 14px; }
 .browser-frame { border: 1px solid #52616b; border-radius: 10px; overflow: hidden; background: #0d1117; box-shadow: 0 20px 70px #0003; }
 .browser-bar { gap: 30px; }
 .browser-bar > span:last-child { border-radius: 4px; padding: 4px 20px; background: #17222b; color: #a3b0ba; font-size: 11px; }
@@ -195,7 +195,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .section { padding: 80px 28px; }
     .providers { padding-bottom: 40px; }
     .mcp-intro { gap: 40px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-    .notifications, .ownership, .install { gap: 50px; }
+    .ownership, .install { gap: 50px; }
     .updates { gap: 30px; }
     .footer { padding: 32px 28px; }
 }
@@ -230,12 +230,11 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .providers svg { width: 16px; height: 16px; }
     .section { padding: 60px 24px; }
     .section h2 { font-size: 32px; }
-    .story-heading { display: block; margin-bottom: 28px; }
-    .story-heading > div { margin-top: 22px; max-width: 420px; }
     .tablet-frame { padding: 5px; border-radius: 12px; }
-    .notifications, .ownership, .install { grid-template-columns: 1fr; gap: 32px; }
+    .ownership, .install { grid-template-columns: 1fr; gap: 32px; }
     .notification-preview { padding: 24px; }
-    .notification-copy > p { max-width: 400px; }
+    .surface-tabs button { padding: 7px 16px; }
+    .surface-claim { font-size: 15px; }
     .browser-bar { padding: 10px; gap: 12px; }
     .browser-bar > span:last-child { padding: 4px 8px; font-size: 8px; }
     .mcp-intro { grid-template-columns: minmax(0, 1fr); gap: 36px; }
