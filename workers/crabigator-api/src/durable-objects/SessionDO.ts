@@ -11,7 +11,7 @@ import type {
     GitCommitInfo,
     ChangesEvent,
     SlackThread,
-    StatsEvent,
+    StatsEvent, FlowEvent,
 } from '../types/session';
 import type { Env } from '../types/env';
 import {
@@ -69,6 +69,8 @@ function expandKeySequenceSteps(steps: KeyStep[]): KeyStep[] {
  * (state transitions, prompt changes, title changes)
  */
 interface PersistentState {
+    /** The session's flow scene for late viewers; stored only when more than its level changes. */
+    lastFlow?: FlowEvent | null;
     conductorCommand?: string;
     sessionId: string;
     state: SessionState;
@@ -1041,6 +1043,16 @@ export class SessionDO implements DurableObject {
                 // Ephemeral state - no storage write
                 this.ephemeralState.lastChanges = event as ChangesEvent;
                 break;
+            case 'flow': {
+                // The level moves often; store only a new scene or look.
+                const flow = event as FlowEvent;
+                const previous = this.persistentState.lastFlow;
+                this.persistentState.lastFlow = flow;
+                if (!previous || JSON.stringify({ ...previous, level: 0 }) !== JSON.stringify({ ...flow, level: 0 })) {
+                    persistentChanged = true;
+                }
+                break;
+            }
             case 'stats': {
                 const stats = event as StatsEvent;
                 const previousPrompts = this.persistentState.attentionPromptCount;
@@ -1288,6 +1300,10 @@ export class SessionDO implements DurableObject {
         // Send stats if available (ephemeral - cached from last desktop push)
         if (this.ephemeralState.lastStats) {
             this.sendViewerEvent(viewer, this.ephemeralState.lastStats);
+        }
+
+        if (this.persistentState.lastFlow) {
+            this.sendViewerEvent(viewer, this.persistentState.lastFlow);
         }
 
         // Never replay a consumed prompt while the desktop is still repainting.
@@ -1686,6 +1702,7 @@ export class SessionDO implements DurableObject {
                 git: this.ephemeralState.lastGit,
                 changes: this.ephemeralState.lastChanges,
                 stats: this.ephemeralState.lastStats,
+                flow: this.persistentState.lastFlow ?? null,
                 screen: this.ephemeralState.lastScreen,
                 scrollback: this.ephemeralState.scrollbackContent,
                 scrollback_lines: this.ephemeralState.lastScrollbackLine,

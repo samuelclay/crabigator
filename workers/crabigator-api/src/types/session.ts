@@ -148,6 +148,26 @@ export interface PermissionInfo {
 /**
  * Session statistics event
  */
+/**
+ * The session's flow scene and dials, as the desktop's column has them. The apps
+ * and the dashboard draw the same scene with crates/flow-render (as WebAssembly
+ * on the web). `scene` is null while the column is off.
+ */
+export interface FlowEvent {
+    type: 'flow';
+    scene: string | null;
+    seed: number;
+    /** The session's hue in OKLCH degrees; absent for the scene's own colours. */
+    hue?: number;
+    /** 0 draws nothing; 1 is calm; 10 the busiest. */
+    level: number;
+    waiting: boolean;
+    night: boolean;
+    tint: 'normal' | 'smoke' | 'blue';
+    /** Above 0 while subagents run. */
+    boost: number;
+}
+
 export interface StatsEvent {
     type: 'stats';
     prompts: number;
@@ -444,7 +464,8 @@ export type SessionEvent =
     | PromptEvent
     | RecapEvent
     | RecapHistoryEvent
-    | PrsEvent;
+    | PrsEvent
+    | FlowEvent;
 
 /**
  * Message from cloud to desktop (via WebSocket)
