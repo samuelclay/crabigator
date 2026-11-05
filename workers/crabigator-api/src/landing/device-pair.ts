@@ -37,6 +37,5 @@ export function devicePairHtml(options: {
                         <div class="phone-home"><span></span></div>
                     </div>
                 </div>
-                <button class="stream-toggle" type="button" aria-label="Pause animation" hidden>Ⅱ</button>
             </figure>`;
 }

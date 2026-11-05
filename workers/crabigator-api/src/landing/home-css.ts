@@ -37,7 +37,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .button-secondary { border: 1px solid var(--line); }
 .button-primary:hover { background: #ffcaa5; }.button-secondary:hover { border-color: var(--muted); }
 .hero-screens { position: relative; margin-top: 150px; }
-.hero-screens > .stream-toggle { position: absolute; left: 0; top: -40px; }
 .desktop-frame { container-type: inline-size; position: relative; border: 1px solid #52616b; border-radius: 10px; overflow: hidden; background: #101214; box-shadow: 0 30px 70px #0004; }
 .desktop-bar, .browser-bar { display: flex; align-items: center; gap: 16px; padding: 13px 16px; background: #28343e; color: #d1dbe1; font-size: 11px; }
 .desktop-bar > span:last-child { flex: 1; margin-right: 52px; text-align: center; color: #a3b0ba; }
@@ -108,7 +107,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .agent-pair.reverse { flex-direction: row-reverse; }
 .desktop-frame.pair-desktop { flex: none; width: 73%; }
 .pair-phone { flex: none; width: 24%; }
-.agent-pair > .stream-toggle { position: absolute; right: 0; top: -40px; }
 .desktop-capture, .pair-capture { font-size: calc((100cqw - 36px) / (var(--cols) * .6)); }
 .pair-capture { padding: 16px 18px; }
 .pair-phone .phone-app-bar strong { font-size: 4.4cqw; color: #65b1f7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -215,7 +213,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .pair-capture { padding: 9px; }
     .device-pair.agent-pair, .agent-pair.reverse { display: block; margin-top: 36px; }
     .desktop-frame.pair-desktop { width: 100%; }
-    .agent-pair > .stream-toggle, .hero-screens > .stream-toggle { top: auto; bottom: 0; left: auto; right: 0; }
     .hero-phone, .pair-phone { position: relative; top: auto; right: auto; width: 44%; margin: -30% 0 0 4%; z-index: 1; }
     .phone-frame { padding: 4px; border-radius: 18px; }
     .phone-screen { border-radius: 12px; }
