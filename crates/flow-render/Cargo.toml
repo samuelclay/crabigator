@@ -1,0 +1,33 @@
+[package]
+name = "flow-render"
+version = "0.1.0"
+edition = "2021"
+description = "Crabigator's flow scenes for the iOS and Android apps and the web dashboard"
+license = "MIT"
+publish = false
+
+# Its own workspace: the CLI never builds this crate.
+[workspace]
+
+[lib]
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+jni = { version = "0.21", default-features = false, optional = true }
+
+[dev-dependencies]
+# The scenes' own tests replay flow's recorded frames (src/flow/reference.rs).
+base64 = "0.22"
+serde_json = "1"
+
+[features]
+# The JNI entry points the Android app calls.
+android = ["dep:jni"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
