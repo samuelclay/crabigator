@@ -100,16 +100,19 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .providers span { display: flex; align-items: center; gap: 8px; }
 .providers svg { width: 18px; height: 18px; fill: currentColor; }
 .section { max-width: 1296px; margin: 0 auto; padding: 100px 48px; }
-.agent { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2.3fr); gap: 64px; align-items: center; padding-top: 50px; padding-bottom: 50px; }
-.agent-reverse { grid-template-columns: minmax(0, 2.3fr) minmax(0, 1fr); }
-.agent-reverse .agent-copy { order: 2; }
-.agent-name { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; color: var(--muted); font-size: 14px; }
-.agent-name svg { width: 18px; height: 18px; fill: currentColor; }
-.agent-copy > p:not(.agent-name) { max-width: 360px; margin-top: 24px; color: var(--muted); }
-.agent-copy code { color: var(--ink); }
-.desktop-frame.agent-frame { position: relative; top: auto; width: auto; }
-.desktop-capture, .agent-capture { font-size: calc((100cqw - 36px) / (var(--cols) * .6)); }
-.agent-capture { padding: 18px; }
+.agent { padding-top: 70px; padding-bottom: 70px; }
+.agent > h2 { text-align: center; }
+.section h2 > span { display: block; color: #7f8e99; }
+.device-pair.agent-pair { position: relative; display: flex; align-items: flex-end; justify-content: space-between; margin-top: 52px; }
+.agent-pair.reverse { flex-direction: row-reverse; }
+.desktop-frame.pair-desktop { position: relative; top: auto; flex: none; width: 73%; }
+.pair-desktop .desktop-bar > span:last-child { flex: 1; margin: 0 52px 0 0; text-align: center; color: #a3b0ba; font-size: 11px; }
+.pair-phone { flex: none; width: 24%; }
+.agent-pair > .stream-toggle { position: absolute; right: 0; top: -40px; }
+.desktop-capture, .pair-capture { font-size: calc((100cqw - 36px) / (var(--cols) * .6)); }
+.pair-capture { padding: 16px 18px; }
+.pair-phone .phone-app-bar strong { font-size: 4.4cqw; color: #65b1f7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pair-phone .phone-app-bar div { min-width: 0; }
 .section h2 { font-size: clamp(32px, 3.4vw, 48px); line-height: 1.14; letter-spacing: -.045em; font-weight: 450; }
 .story-heading { display: flex; align-items: end; justify-content: space-between; gap: 64px; margin-bottom: 46px; }
 .story-heading > div { max-width: 340px; }
@@ -117,7 +120,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .availability { font-size: 12px; margin-top: 18px; }
 .native { padding-top: 45px; }
 .tablet-frame { padding: 12px; border: 2px solid #52616b; border-radius: 30px; background: #070b0e; box-shadow: 0 20px 70px #0003; }
-.agent-screen figcaption, .tablet-preview figcaption, .web-preview figcaption { margin-top: 18px; color: var(--muted); font-size: 12px; }
+.tablet-preview figcaption, .web-preview figcaption { margin-top: 18px; color: var(--muted); font-size: 12px; }
 .notifications { display: grid; grid-template-columns: 1fr 1fr; gap: 100px; align-items: center; }
 .notification-copy > p { max-width: 310px; margin-top: 26px; }
 .notification-copy > .availability { margin-top: 18px; }
@@ -195,9 +198,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .section { padding: 80px 28px; }
     .providers { padding-bottom: 40px; }
     .mcp-intro { gap: 40px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-    .agent, .agent-reverse { grid-template-columns: minmax(0, 1fr); gap: 36px; }
-    .agent-reverse .agent-copy { order: 0; }
-    .agent-copy > p:not(.agent-name) { max-width: 560px; }
     .notifications, .ownership, .install { gap: 50px; }
     .updates { gap: 30px; }
     .footer { padding: 32px 28px; }
@@ -223,9 +223,12 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .desktop-bar > span:last-child { display: none; }
     .window-dots { gap: 3px; }
     .window-dots i { width: 5px; height: 5px; }
-    .desktop-capture, .agent-capture { font-size: calc((100cqw - 18px) / (var(--cols) * .6)); }
+    .desktop-capture, .pair-capture { font-size: calc((100cqw - 18px) / (var(--cols) * .6)); }
     .desktop-capture { padding: 14px 9px; }
-    .agent-capture { padding: 9px; }
+    .pair-capture { padding: 9px; }
+    .device-pair.agent-pair, .agent-pair.reverse { flex-direction: column; align-items: center; gap: 28px; }
+    .desktop-frame.pair-desktop { width: 100%; }
+    .pair-phone { width: 62%; }
     .hero-phone { width: 43%; top: 112px; right: -7px; }
     .phone-frame { padding: 4px; border-radius: 18px; }
     .phone-screen { border-radius: 12px; }

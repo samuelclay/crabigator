@@ -12,7 +12,7 @@ const session: SessionValues = {
     context: { used: 312_000, limit: 1_000_000 },
     branch: 'ios-rich-notifications', files: 5, symbols: 7,
     recap: 'Answers questions from the notification.',
-    asking: true,
+    state: 'asking',
 };
 
 const options = [

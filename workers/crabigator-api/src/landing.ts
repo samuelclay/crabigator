@@ -4,6 +4,7 @@ import { heroCapture, claudeCapture, codexCapture } from './landing/desktop-capt
 import { flowScenes } from './landing/flow-scenes';
 import { appModulesHtml } from './landing/app-modules';
 import { notificationPreviewHtml } from './landing/notification-preview';
+import { devicePairHtml } from './landing/device-pair';
 import { tabletPreviewHtml, webPreviewHtml } from './landing/product-previews';
 import { productPreviewsCss } from './landing/product-previews-css';
 import { homeCss } from './landing/home-css';
@@ -67,7 +68,7 @@ export const landingHtml = `<!DOCTYPE html>
                     <p>For Claude Code, Codex, opencode &amp; Grok.</p>
                 </div>
             </div>
-            <figure class="hero-screens" aria-label="The same Claude Code session on desktop and iPhone">
+            <figure class="hero-screens device-pair" aria-label="The same Claude Code session on desktop and iPhone">
                 <div class="desktop-frame">
                     <div class="desktop-bar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Claude Code</span><span>~/projects/crabigator</span></div>
                     <div class="desktop-capture term-capture" style="--cols:${heroCapture.cols}">${heroCapture.desktopHtml}</div>
@@ -82,7 +83,7 @@ export const landingHtml = `<!DOCTYPE html>
                         <div class="phone-home"><span></span></div>
                     </div>
                 </div>
-                <figcaption><span>On your desktop</span><span class="connection-line" aria-hidden="true"><span class="stream-packet"></span></span><span>On your phone</span><button class="hero-stream-toggle" type="button" aria-label="Pause terminal animation" hidden>Ⅱ</button></figcaption>
+                <figcaption><span>On your desktop</span><span class="connection-line" aria-hidden="true"><span class="stream-packet"></span></span><span>On your phone</span><button class="stream-toggle" type="button" aria-label="Pause animation" hidden>Ⅱ</button></figcaption>
             </figure>
         </section>
 
@@ -91,33 +92,19 @@ export const landingHtml = `<!DOCTYPE html>
         </div>
 
         <section class="section agent" id="claude-code" aria-labelledby="claude-code-title">
-            <div class="agent-copy">
-                <p class="agent-name">${iconClaude} Claude Code</p>
-                <h2 id="claude-code-title">Claude Code,<br>with the whole picture.</h2>
-                <p>Run <code>crabigator</code> where you would run <code>claude</code>. Claude Code works as it always does. Below it, you see how long the session has run, how full the context window is, which files changed, and a small scene that moves with the work.</p>
-            </div>
-            <figure class="agent-screen">
-                <div class="desktop-frame agent-frame">
-                    <div class="desktop-bar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Claude Code</span><span>~/projects/crabigator</span></div>
-                    <div class="agent-capture term-capture" style="--cols:${claudeCapture.cols}" role="img" aria-label="A Claude Code session in Crabigator. Below Claude’s answer, the status bar shows session time, the context window, changed files, and a train scene.">${claudeCapture.html}</div>
-                </div>
-                <figcaption>Claude Code with the train scene</figcaption>
-            </figure>
+            <h2 id="claude-code-title">Claude Code, unchanged.<span>Run crabigator instead of claude.</span></h2>
+            ${devicePairHtml({
+                capture: claudeCapture, command: 'claude', title: 'Fire scene night look', phoneFlow: flowScenes.claudePhone,
+                label: 'Claude Code at work in Crabigator, editing the fire scene, with a moving train scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive, with an engine scene.',
+            })}
         </section>
 
-        <section class="section agent agent-reverse" id="codex" aria-labelledby="codex-title">
-            <div class="agent-copy">
-                <p class="agent-name">${iconCodex} Codex</p>
-                <h2 id="codex-title">Codex gets<br>the same view.</h2>
-                <p>Run <code>crabigator codex</code>. Codex keeps its own screen, and you get the same status bar, recaps, and phone access. Each session picks its own scene, so you can tell them apart at a glance.</p>
-            </div>
-            <figure class="agent-screen">
-                <div class="desktop-frame agent-frame">
-                    <div class="desktop-bar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Codex</span><span>~/projects/crabigator</span></div>
-                    <div class="agent-capture term-capture" style="--cols:${codexCapture.cols}" role="img" aria-label="A Codex session in Crabigator. Below Codex’s answer, the status bar shows session time, the context window, changed files, and a surf scene.">${codexCapture.html}</div>
-                </div>
-                <figcaption>Codex with the surf scene</figcaption>
-            </figure>
+        <section class="section agent" id="codex" aria-labelledby="codex-title">
+            <h2 id="codex-title">Codex, too.<span>Run crabigator codex instead of codex.</span></h2>
+            ${devicePairHtml({
+                capture: codexCapture, command: 'codex', title: 'Add scene-name uniqueness test', phoneFlow: flowScenes.codexPhone, reverse: true,
+                label: 'Codex at work in Crabigator, adding a test, with a moving surf scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive, with a warp scene.',
+            })}
         </section>
 
         <section class="native section" id="native">
