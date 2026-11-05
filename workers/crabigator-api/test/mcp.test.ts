@@ -479,7 +479,7 @@ describe('MCP tools listing page', () => {
         expect(landingHtml).toContain('id="mcp"');
         expect(landingHtml).toContain('/mcp-tools');
         expect(landingHtml).toContain('list_sessions');
-        expect(landingHtml).toContain('Let another agent drive your sessions');
+        expect(landingHtml).toContain('Let another agent drive.');
         expect(landingHtml).not.toContain('Look around');
         expect(landingHtml).not.toContain('Take action');
         expect(landingHtml).not.toContain('mcp-groups');
