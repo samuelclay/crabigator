@@ -173,12 +173,26 @@ async function tokenFor(env: Env, signupId: number): Promise<string> {
 }
 
 /**
- * Send the oldest unfinished release email to its next batch of subscribers.
- * Everyone who signed up before the release was announced gets it, unless
- * they unsubscribed. A failure that isn't one address's fault (GitHub or
- * Mailgun down, a bad key) stops the batch, and the next run picks it up.
+ * Send queued release emails, up to `batch` emails in all, oldest first: a
+ * test queued beside a release doesn't wait a run for its turn.
  */
 export async function sendReleaseEmails(env: Env, mailer: ReleaseMailer, batch = BATCH): Promise<void> {
+    let budget = batch;
+    while (budget > 0) {
+        const used = await sendNext(env, mailer, budget);
+        if (used === null) return;
+        budget -= used;
+    }
+}
+
+/**
+ * Send the oldest unfinished release email to up to `budget` subscribers;
+ * how many it tried, or null when nothing was ready or it stopped. Everyone
+ * who signed up before the release was announced gets it, unless they
+ * unsubscribed. A failure that isn't one address's fault (GitHub or Mailgun
+ * down, a bad key) stops the run, and the next run picks it up.
+ */
+async function sendNext(env: Env, mailer: ReleaseMailer, budget: number): Promise<number | null> {
     const now = Math.floor(Date.now() / 1000);
     const row = await env.DB.prepare(`
         SELECT id, tag, test_recipient, subject, html, text, release_json, last_signup_id, created_at
@@ -186,11 +200,11 @@ export async function sendReleaseEmails(env: Env, mailer: ReleaseMailer, batch =
         WHERE finished_at IS NULL AND (claimed_at IS NULL OR claimed_at < ?)
         ORDER BY id LIMIT 1
     `).bind(now - CLAIM_SECONDS).first<ReleaseEmailRow>();
-    if (!row) return;
+    if (!row) return null;
     const claim = await env.DB.prepare(
         'UPDATE release_emails SET claimed_at = ? WHERE id = ? AND (claimed_at IS NULL OR claimed_at < ?)',
     ).bind(now, row.id, now - CLAIM_SECONDS).run();
-    if (!claim.meta.changes) return;
+    if (!claim.meta.changes) return null;
 
     const finish = (error: string | null) => env.DB.prepare(
         'UPDATE release_emails SET finished_at = ?, error = COALESCE(?, error), claimed_at = NULL WHERE id = ?',
@@ -203,7 +217,7 @@ export async function sendReleaseEmails(env: Env, mailer: ReleaseMailer, batch =
             const release = row.release_json ? JSON.parse(row.release_json) as Release : await fetchRelease(row.tag);
             if (!release) {
                 await finish(`GitHub has no release ${row.tag}`);
-                return;
+                return 0;
             }
             email = composeReleaseEmail(release, mailer.origin);
             await env.DB.prepare('UPDATE release_emails SET subject = ?, html = ?, text = ?, error = NULL WHERE id = ?')
@@ -217,14 +231,14 @@ export async function sendReleaseEmails(env: Env, mailer: ReleaseMailer, batch =
             await sendOne(env, mailer, row.test_recipient, email, unsubscribeUrl(mailer.origin, token));
             await env.DB.prepare('UPDATE release_emails SET sent_count = 1 WHERE id = ?').bind(row.id).run();
             await finish(null);
-            return;
+            return 1;
         }
 
         const { results } = await env.DB.prepare(`
             SELECT id, email, unsubscribe_token FROM email_signups
             WHERE id > ? AND unsubscribed = 0 AND created_at <= ?
             ORDER BY id LIMIT ?
-        `).bind(row.last_signup_id, row.created_at, batch).all<{ id: number; email: string; unsubscribe_token: string | null }>();
+        `).bind(row.last_signup_id, row.created_at, budget).all<{ id: number; email: string; unsubscribe_token: string | null }>();
         for (const signup of results) {
             const token = signup.unsubscribe_token ?? await tokenFor(env, signup.id);
             let failed: string | null = null;
@@ -241,11 +255,13 @@ export async function sendReleaseEmails(env: Env, mailer: ReleaseMailer, batch =
                 WHERE id = ?
             `).bind(signup.id, failed ? 0 : 1, failed ? 1 : 0, failed, row.id).run();
         }
-        if (results.length < batch) await finish(null);
+        if (results.length < budget) await finish(null);
         else await env.DB.prepare('UPDATE release_emails SET claimed_at = NULL WHERE id = ?').bind(row.id).run();
+        return results.length;
     } catch (error) {
         await env.DB.prepare('UPDATE release_emails SET error = ?, claimed_at = NULL WHERE id = ?')
             .bind(error instanceof Error ? error.message : String(error), row.id).run();
+        return null;
     }
 }
 

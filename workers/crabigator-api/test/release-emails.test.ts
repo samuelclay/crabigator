@@ -146,6 +146,17 @@ it('stops without skipping anyone when Mailgun fails, and tries again next run',
     expect(sent.map(form => form.get('to'))).toEqual(['a@example.com']);
 });
 
+it('sends several queued emails in one run, within its budget', async () => {
+    await subscribe('a@example.com');
+    await testEnv.DB.prepare("INSERT INTO release_emails (tag, test_recipient) VALUES ('v0.18.0', 'me@example.com'), ('v0.18.0', 'you@example.com')").run();
+    await testEnv.DB.prepare("INSERT INTO release_emails (tag, created_at) VALUES ('v0.18.0', unixepoch() + 60)").run();
+    const sent = stubNetwork();
+    await sendReleaseEmails(testEnv, mailer, 2);
+    expect(sent.map(form => form.get('to'))).toEqual(['me@example.com', 'you@example.com']);
+    await sendReleaseEmails(testEnv, mailer, 2);
+    expect(sent.map(form => form.get('to'))).toEqual(['me@example.com', 'you@example.com', 'a@example.com']);
+});
+
 it('sends a test to one address only, and finishes a release GitHub doesn’t have', async () => {
     await subscribe('a@example.com');
     await testEnv.DB.prepare("INSERT INTO release_emails (tag, test_recipient) VALUES ('v0.18.0', 'me@example.com')").run();
