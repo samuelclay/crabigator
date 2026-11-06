@@ -81,6 +81,9 @@ it('writes the email from the release title and highlights', () => {
     expect(email.text).toContain('- **Vertical flow.** Tall `terminals` get it.');
     expect(email.text).toContain('Unsubscribe: {{unsubscribe_url}}');
     expect(email.text).toContain('signed up for release news at crab.example');
+    // It opens with the homepage's share image, and the plain text says what Crabigator is.
+    expect(email.html).toMatch(/<a href="https:\/\/crab\.example\/"><img src="https:\/\/crab\.example\/assets\/og-landing\.png\?v=[0-9a-f]+"/);
+    expect(email.text).toContain('Crabigator runs Claude Code, Codex, opencode, and Grok in your terminal');
 });
 
 it('emails each subscriber once, with their own unsubscribe link, skipping the unsubscribed and later signups', async () => {

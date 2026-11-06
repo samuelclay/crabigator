@@ -9,6 +9,7 @@
  * link, and the one-click header mail apps use, to unsubscribe.
  */
 import type { Env } from './types/env';
+import { ogLandingImage } from './landing';
 
 /** The repository whose releases the emails announce. */
 const RELEASES_REPO = 'samuelclay/crabigator';
@@ -65,7 +66,14 @@ export function releaseHighlights(notes: string, kind: 'html' | 'markdown'): str
     return (cut >= 0 ? notes.slice(0, cut) : notes).replace(heading, '').trim();
 }
 
-/** The email for a release, with `{{unsubscribe_url}}` where each recipient's link goes. */
+/** What Crabigator is, for people who signed up a while ago (and for the plain-text email, which has no picture). */
+const ABOUT = 'Crabigator runs Claude Code, Codex, opencode, and Grok in your terminal and adds what they don’t show: git changes, a recap of each turn, the pull requests each session touches, and a scene that moves with the work. Follow and answer every session from your phone or a browser tab.';
+
+/**
+ * The email for a release, with `{{unsubscribe_url}}` where each recipient's
+ * link goes. It opens with the homepage's share image, which says what
+ * Crabigator is, then the release's highlights.
+ */
 export function composeReleaseEmail(release: Release, origin: string): ReleaseEmail {
     const version = release.tag_name.replace(/^v/, '');
     // Release titles read "vX.Y.Z · One-liner".
@@ -91,6 +99,7 @@ export function composeReleaseEmail(release: Release, origin: string): ReleaseEm
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background: #f6f4ef;">
 <tr><td align="center" style="padding: 32px 16px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; background: #ffffff; border-radius: 8px;">
+<tr><td style="padding: 0;"><a href="${escapeHtml(origin)}/"><img src="${escapeHtml(origin + ogLandingImage)}" width="600" alt="Crabigator. Take your agents with you: Claude Code, Codex, opencode, and Grok, live on your phone." style="display: block; width: 100%; max-width: 600px; height: auto; border: 0; border-radius: 8px 8px 0 0;"></a></td></tr>
 <tr><td style="padding: 32px; font-family: ${font}; font-size: 15px; line-height: 1.55; color: #1d1b18;">
 <p style="margin: 0 0 6px; font-size: 13px; color: #8a8378;">Crabigator ${escapeHtml(version)}</p>
 <h1 style="margin: 0 0 20px; font-size: 22px; line-height: 1.3;">${escapeHtml(title || 'A new release')}</h1>
@@ -106,6 +115,9 @@ export function composeReleaseEmail(release: Release, origin: string): ReleaseEm
 </html>`;
     const text = [
         subject,
+        '',
+        ABOUT,
+        origin,
         '',
         releaseHighlights(release.body || '', 'markdown'),
         '',
