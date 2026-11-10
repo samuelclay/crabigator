@@ -298,6 +298,8 @@ pub struct App {
     /// The AskUserQuestion page last sent to the cloud, so page changes,
     /// checkbox toggles and the review page reach the dashboard once each
     last_question_screen: Option<crate::parsers::QuestionScreen>,
+    /// Ticks on rows of Claude's question page that are above the screen.
+    hidden_ticks: crate::cloud::HiddenTicks,
     /// The Codex question menu on screen at the last capture. Remote
     /// answers open waiting async questions first, and ctrl+] reaches
     /// Codex's "skip" while its async questions are open.
@@ -518,6 +520,7 @@ impl App {
             last_exit_plan_option_count: 0,
             last_exit_plan_retry_count: 0,
             last_question_screen: None,
+            hidden_ticks: Default::default(),
             codex_question_prompt: None,
             pairing_state,
             recap_manager,
@@ -2466,6 +2469,11 @@ impl App {
         }
 
         forward_key_to_pty(key, &mut self.platform_pty, self.kitty_keyboard.active())?;
+        if let (KeyCode::Char(digit @ '1'..='9'), true) = (key.code, key.modifiers.is_empty()) {
+            if self.hidden_ticks.key(&[digit as u8]) {
+                self.send_cloud_prompt_event();
+            }
+        }
         Ok(())
     }
 
@@ -2983,13 +2991,29 @@ impl App {
         // Read the question page from the screen so the dashboard can
         // mirror it. Read the terminal directly: with --no-capture the
         // capture manager returns nothing.
-        let question_screen = if self.question_screen_open() {
+        let mut question_screen = if self.question_screen_open() {
             let screen = screen_to_string(self.platform_pty.screen());
             crate::parsers::QuestionScreen::parse(&screen)
         } else {
             None
         };
         self.last_question_screen = question_screen.clone();
+
+        // Claude never redraws a row above the screen, so add the ticks we
+        // followed there by their keys.
+        let claude_questions = match active_prompt.as_ref() {
+            Some(crate::platforms::ActivePrompt::Question { questions })
+                if self.platform.kind() == crate::platforms::PlatformKind::Claude =>
+            {
+                questions.as_slice()
+            }
+            _ => &[],
+        };
+        self.hidden_ticks
+            .see(claude_questions, question_screen.as_ref());
+        if let Some(screen) = question_screen.as_mut() {
+            self.hidden_ticks.fill(screen);
+        }
 
         let question_ui =
             (self.platform.kind() == crate::platforms::PlatformKind::Grok).then_some("grok_card");
@@ -3088,6 +3112,7 @@ impl App {
             )
         );
         let mut questions_waiting = codex_question == Some(CodexQuestionPrompt::QuestionsWaiting);
+        let mut hidden_tick_changed = false;
         let open_questions = |pty: &mut PlatformPty, waiting: &mut bool| -> Result<()> {
             if std::mem::take(waiting) {
                 pty.write(escape::key::SHIFT_LEFT)?;
@@ -3192,6 +3217,7 @@ impl App {
                         }
                         crate::cloud::KeyStep::Text { text } => {
                             self.platform_pty.write(text.as_bytes())?;
+                            hidden_tick_changed |= self.hidden_ticks.key(text.as_bytes());
                         }
                         crate::cloud::KeyStep::Delay { ms } => {
                             std::thread::sleep(std::time::Duration::from_millis(ms as u64));
@@ -3201,6 +3227,10 @@ impl App {
                     std::thread::sleep(std::time::Duration::from_millis(20));
                 }
             }
+        }
+        // The screen will not change for a tick above it, so report it here.
+        if hidden_tick_changed {
+            self.send_cloud_prompt_event();
         }
         // Another Shift+Left before the next capture would skip a question.
         if codex_question == Some(CodexQuestionPrompt::QuestionsWaiting) && !questions_waiting {

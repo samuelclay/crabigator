@@ -779,15 +779,9 @@ impl QuestionPageState {
                 ..Self::default()
             },
             Some(QuestionScreen::Page {
-                question,
-                rows,
-                submit_row,
-                page_index,
+                rows, submit_row, ..
             }) => {
-                let current_question = page_index
-                    .filter(|&i| i < questions.len())
-                    .or_else(|| find_question(questions, question))
-                    .or_else(|| find_question_by_rows(questions, rows));
+                let current_question = shown_question(questions, screen);
                 let option_count = current_question
                     .map(|i| questions[i].options.len() as u32)
                     .unwrap_or_else(|| rows.len().saturating_sub(1) as u32);
@@ -820,6 +814,27 @@ impl QuestionPageState {
             }
         }
     }
+}
+
+/// Which question the page on screen asks: the tab the strip highlights,
+/// else the question text, else the option rows.
+pub(super) fn shown_question(
+    questions: &[crate::platforms::Question],
+    screen: Option<&crate::parsers::QuestionScreen>,
+) -> Option<usize> {
+    let crate::parsers::QuestionScreen::Page {
+        question,
+        rows,
+        page_index,
+        ..
+    } = screen?
+    else {
+        return None;
+    };
+    page_index
+        .filter(|&i| i < questions.len())
+        .or_else(|| find_question(questions, question))
+        .or_else(|| find_question_by_rows(questions, rows))
 }
 
 /// Find which question the screen shows. The screen wraps long questions
