@@ -74,9 +74,9 @@ final class API: NSObject, URLSessionTaskDelegate {
         if let body { request.httpMethod = "POST"; request.httpBody = try JSONSerialization.data(withJSONObject: body); request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         return request
     }
-    func execute(_ request: URLRequest) async throws -> JSON {
+    func execute(_ request: URLRequest, with session: URLSession? = nil) async throws -> JSON {
         // Mutating requests are issued once. An ambiguous failure must never replay terminal input.
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await (session ?? self.session).data(for: request)
         let json = (try? JSONSerialization.jsonObject(with: data)) as? JSON
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(code) else { throw APIError(status: code, message: json?.text("error", "Request failed (\(code)).") ?? "Request failed (\(code)).") }
@@ -104,12 +104,36 @@ final class API: NSObject, URLSessionTaskDelegate {
         if let revision { body["expected_prompt_revision"] = revision }
         _ = try await call("/api/sessions/\(id)/\(action.route)", body: body)
     }
-    func transcribe(_ file: URL) async throws -> String {
+    /// Whisper can take longer than the usual limits on a two-minute recording.
+    private lazy var uploads: URLSession = {
+        // A copy of the usual session's settings, so only the timeouts differ.
+        let config = session.configuration
+        config.timeoutIntervalForRequest = 120; config.timeoutIntervalForResource = 180
+        return URLSession(configuration: config, delegate: self, delegateQueue: nil)
+    }()
+    /// The server saves the transcript to the account's history before it answers.
+    func transcribe(_ file: URL, sessionID: String, title: String, seconds: Double) async throws -> String {
         let boundary = UUID().uuidString
         var request = try request("/api/transcribe")
         request.httpMethod = "POST"; request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        var data = Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"recording.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n".utf8)
+        var data = Data()
+        let fields = ["client": "ios", "session_id": sessionID, "session_title": title, "recorded_seconds": String(format: "%.1f", seconds)]
+        for (name, value) in fields where !value.isEmpty {
+            data.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
+        }
+        data.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"recording.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n".utf8))
         data.append(try Data(contentsOf: file)); data.append(Data("\r\n--\(boundary)--\r\n".utf8)); request.httpBody = data
-        return try await execute(request).text("text").trimmingCharacters(in: .whitespacesAndNewlines)
+        return try await execute(request, with: uploads).text("text").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    func voiceTranscripts(sessionID: String?, before: Int?) async throws -> JSON {
+        var items: [URLQueryItem] = []
+        if let sessionID { items.append(URLQueryItem(name: "session_id", value: sessionID)) }
+        if let before { items.append(URLQueryItem(name: "before", value: String(before))) }
+        var path = URLComponents(); path.path = "/api/transcripts"; path.queryItems = items.isEmpty ? nil : items
+        return try await call(path.string ?? "/api/transcripts")
+    }
+    func deleteVoiceTranscript(_ id: String) async throws {
+        var request = try request("/api/transcripts/\(id)"); request.httpMethod = "DELETE"
+        _ = try await execute(request)
     }
 }

@@ -97,7 +97,7 @@ struct SessionDetail: View {
                 Text(stream.connected ? "\(session.machine) · Live" : !session.active ? "\(session.machine) · Ended" : stream.desktopStatusKnown ? "\(session.machine) · Disconnected" : "Connecting…").font(.system(size: 11)).foregroundStyle(stream.connected ? Crab.mint : Crab.muted).lineLimit(1)
             }.frame(maxWidth: .infinity, alignment: .leading)
             IconButton(icon: "arrow.down.to.line", label: pinned ? "Stop following output" : "Follow latest output", selected: pinned) { pinned.toggle() }
-            IconButton(icon: "textformat.size", label: "Style") { style = true }.popover(isPresented: $style, arrowEdge: .top) { StyleMenu(model: model).nativePopover() }
+            IconButton(icon: "textformat.size", label: "Style") { style = true }.popover(isPresented: $style, arrowEdge: .top) { StyleMenu(model: model, sessionID: session.id).nativePopover() }
         }.padding(.horizontal, 4).padding(.vertical, 8)
     }
     func expandedDrawerHeight(_ available: CGFloat) -> CGFloat {

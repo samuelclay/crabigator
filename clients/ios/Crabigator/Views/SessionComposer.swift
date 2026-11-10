@@ -20,7 +20,12 @@ struct SessionComposer: View {
         VStack(spacing: 0) {
             Divider()
             if let error = voice.error {
-                HStack { Text(error).font(.caption).foregroundStyle(Crab.red); Spacer(); IconButton(icon: "xmark", label: "Dismiss recording error") { voice.error = nil } }
+                HStack {
+                    Text(error).font(.caption).foregroundStyle(Crab.red); Spacer()
+                    // The recording is kept after a failure, so nothing has to be said twice.
+                    if voice.failed != nil { Button("Try again") { voice.retry { deliver($0, send: false) } }.font(.caption.weight(.semibold)).tint(Crab.orange).frame(minHeight: 44) }
+                    IconButton(icon: "xmark", label: voice.failed != nil ? "Discard recording" : "Dismiss recording error") { voice.dismissError() }
+                }
                     .padding(.leading, 12).transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
             }
             HStack(alignment: .bottom, spacing: 4) {
@@ -67,17 +72,22 @@ struct SessionComposer: View {
             .animation(composerAnimation, value: blank)
             .onAppear { draft = model.drafts[sessionID] ?? ""; voice.timedOut = { finish(send: false) } }
             .onChange(of: draft) { _, value in model.drafts[sessionID] = value }
-            .onChange(of: active) { _, value in if !value { voice.cancel(); focused = false; keys = false } }
-            .onChange(of: model.navigation.conductor) { _, value in if value { voice.cancel(); focused = false; keys = false } }
-            .onChange(of: phase) { _, value in if value != .active { voice.cancel() } }
-            .onDisappear { voice.cancel() }
+            .onChange(of: active) { _, value in if !value { voice.leave(); focused = false; keys = false } }
+            .onChange(of: model.navigation.conductor) { _, value in if value { voice.leave(); focused = false; keys = false } }
+            // Leaving the app ends the recording, so transcribe what was said instead of dropping it.
+            .onChange(of: phase) { _, value in if value == .background && voice.recording { finish(send: false) } }
+            .onDisappear { voice.leave() }
     }
     func finish(send immediately: Bool) {
-        voice.finish { text in
-            guard active, model.selectionID == sessionID else { return }
-            draft = [draft.trimmingCharacters(in: .whitespacesAndNewlines), text].filter { !$0.isEmpty }.joined(separator: "\n")
-            if immediately { send() } else { focused = true }
-        }
+        voice.finish(sessionID: sessionID, title: stream.selected?.title ?? "") { deliver($0, send: immediately) }
+    }
+    /// The transcript always lands in this session's draft, even after the user has moved on.
+    /// It reads the model's draft because this view may be gone by the time the transcript arrives.
+    func deliver(_ text: String, send immediately: Bool) {
+        draft = [(model.drafts[sessionID] ?? "").trimmingCharacters(in: .whitespacesAndNewlines), text].filter { !$0.isEmpty }.joined(separator: "\n")
+        model.drafts[sessionID] = draft
+        guard !voice.quiet, model.selectionID == sessionID else { return }
+        if immediately { send() } else { focused = true }
     }
     func send() {
         guard active, model.selectionID == sessionID else { return }; let text = draft

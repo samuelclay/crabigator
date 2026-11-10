@@ -6,6 +6,8 @@ extension View {
 struct StyleMenu: View {
     @ObservedObject var model: SessionModel
     var standalone = true
+    /// Set when the menu opens from a session, to reach that session's voice transcripts.
+    var sessionID: String?
     @State private var terminal = false
     var body: some View {
         Group {
@@ -19,6 +21,7 @@ struct StyleMenu: View {
                 Text("Terminal").tag(true)
             }.pickerStyle(.segmented).padding(.horizontal, 16).padding(.vertical, 10).accessibilityIdentifier("Style scope")
             Form {
+                if let sessionID { Section { NavigationLink("Voice transcripts") { VoiceTranscripts(model: model, sessionID: sessionID) } } }
                 if terminal {
                     Section("Text") {
                         Stepper("Text size: \(model.preferences.fontSize) pt", value: $model.preferences.fontSize, in: 9...24).accessibilityIdentifier("Terminal text size")
@@ -97,6 +100,7 @@ struct SettingsMenu: View {
                 Section {
                     NavigationLink("Style") { StyleMenu(model: model, standalone: false) }
                     NavigationLink("Notifications") { NotificationSettings() }
+                    NavigationLink("Voice transcripts") { VoiceTranscripts(model: model) }
                 }
                 Section("Session list") {
                     Picker("Position", selection: $model.preferences.sidebarRight) { Text("Left").tag(false); Text("Right").tag(true) }.pickerStyle(.segmented)
@@ -130,6 +134,69 @@ struct SettingsMenu: View {
         }
     }
 }
+/// Every voice transcript the account has made. The server saves each one as it is
+/// transcribed, so a transcript that never reached its session can still be copied here.
+struct VoiceTranscripts: View {
+    @ObservedObject var model: SessionModel
+    var sessionID: String?
+    @State private var rows: [JSON] = []
+    @State private var next: Int?
+    @State private var loaded = false
+    @State private var error = ""
+    @State private var copied = ""
+    @State private var everySession = false
+    private var scope: String? { everySession ? nil : sessionID }
+    var body: some View {
+        List {
+            if sessionID != nil {
+                Picker("Show", selection: $everySession) { Text("This session").tag(false); Text("All sessions").tag(true) }.pickerStyle(.segmented)
+            }
+            if !error.isEmpty { Text(error).foregroundStyle(Crab.red) }
+            if !loaded { ProgressView() }
+            else if rows.isEmpty && error.isEmpty { Text("No voice transcripts yet. Every recording you transcribe is saved here.").foregroundStyle(Crab.muted) }
+            // Rows are identified by transcript, so a swipe-delete removes the right one.
+            ForEach(rows, id: \.transcriptID) { entry($0) }
+            if next != nil { Button("Load more") { Task { await load(more: true) } } }
+        }.navigationTitle("Voice transcripts").navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button(copied == "all" ? "Copied" : "Copy all") { copy(rows.map { $0.text("text") }.joined(separator: "\n\n"), id: "all") }.disabled(rows.isEmpty) }
+            .task(id: everySession) { await load(more: false) }
+    }
+    private func entry(_ row: JSON) -> some View {
+        let id = row.text("id"), recorded = seconds(row, "recorded_seconds"), audio = seconds(row, "audio_seconds")
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text([Date(timeIntervalSince1970: TimeInterval(row.int("created_at"))).formatted(date: .abbreviated, time: .shortened), (audio ?? recorded).map(clock)].compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(Crab.muted)
+                Spacer()
+                Button(copied == id ? "Copied" : "Copy") { copy(row.text("text"), id: id) }.font(.caption.weight(.semibold)).buttonStyle(.borderless).frame(minHeight: 44)
+                    .accessibilityIdentifier("Copy transcript")
+            }
+            if scope == nil && !row.text("session_title").isEmpty { Text(row.text("session_title")).font(.caption).foregroundStyle(Crab.cyan).lineLimit(1) }
+            // The app timed more speech than the server received: audio was lost before upload.
+            if let recorded, let audio, recorded - audio > 5 {
+                Text("Recorded \(clock(recorded)), but only \(clock(audio)) of audio arrived.").font(.caption).foregroundStyle(Crab.orange)
+            }
+            Text(row.text("text")).font(.callout).textSelection(.enabled)
+        }.swipeActions { Button("Delete", role: .destructive) { Task { await delete(id) } } }
+    }
+    private func seconds(_ row: JSON, _ key: String) -> Double? { (row[key] as? NSNumber)?.doubleValue }
+    private func clock(_ seconds: Double) -> String { "\(Int(seconds) / 60):\(String(format: "%02d", Int(seconds) % 60))" }
+    private func copy(_ text: String, id: String) {
+        UIPasteboard.general.string = text; copied = id
+        Task { try? await Task.sleep(for: .seconds(2)); if copied == id { copied = "" } }
+    }
+    private func load(more: Bool) async {
+        do {
+            let page = try await model.api.voiceTranscripts(sessionID: scope, before: more ? next : nil)
+            rows = (more ? rows : []) + page.array("transcripts"); next = page["next_cursor"] as? Int; error = ""
+        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        loaded = true
+    }
+    private func delete(_ id: String) async {
+        do { try await model.api.deleteVoiceTranscript(id); rows.removeAll { $0.transcriptID == id } } catch { self.error = error.localizedDescription }
+    }
+}
+private extension Dictionary where Key == String, Value == Any { var transcriptID: String { text("id") } }
 struct NewSessionButton: View {
     @ObservedObject var model: SessionModel
     @State private var presented = false
