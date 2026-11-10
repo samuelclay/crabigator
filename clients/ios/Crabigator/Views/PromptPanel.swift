@@ -55,7 +55,9 @@ struct PromptPanel: View {
                 ForEach(Array(PromptActions.options(prompt).enumerated()), id: \.offset) { i, option in
                     Button { act(option: i) } label: {
                         HStack(alignment: .top, spacing: 8) {
+                            // Pick-any pages tick boxes; pick-one pages and the review page's two choices are radio buttons.
                             if PromptActions.question(prompt)?.bool("multi_select") == true { Image(systemName: (prompt["checked"] as? [Int] ?? []).contains(i + 1) ? "checkmark.square.fill" : "square") }
+                            else if prompt.text("prompt_type") == "question" { Image(systemName: "circle") }
                             VStack(alignment: .leading, spacing: 3) { Text(option.text("label")).font(.system(size: 14)); if !option.text("description").isEmpty { Text(option.text("description")).font(.system(size: 12)).foregroundStyle(Crab.muted) } }
                             .frame(maxWidth: .infinity, alignment: .leading).padding(10).background(Crab.panel, in: RoundedRectangle(cornerRadius: 8))
                         }

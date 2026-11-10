@@ -391,7 +391,7 @@ class MainActivity : ComponentActivity() {
             val q = PromptActions.question(prompt)
             PromptActions.options(prompt).forEachIndexed { index, option ->
                 val checked = prompt.optJSONArray("checked")?.let { a -> (0 until a.length()).any { a.optInt(it) == index + 1 } } == true
-                OutlinedButton(onClick = { send(PromptActions.action(prompt, option = index)) }, enabled = !disabled, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) { Column(Modifier.fillMaxWidth()) { Text((if (q?.optBoolean("multi_select") == true) if (checked) "☑ " else "☐ " else "") + option.text("label")); if (option.text("description").isNotBlank()) Text(option.text("description"), fontSize = 11.sp, color = Muted) } }
+                OutlinedButton(onClick = { send(PromptActions.action(prompt, option = index)) }, enabled = !disabled, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) { Column(Modifier.fillMaxWidth()) { Text((if (q?.optBoolean("multi_select") == true) if (checked) "☑ " else "☐ " else if (prompt.text("prompt_type") == "question") "○ " else "") + option.text("label")); if (option.text("description").isNotBlank()) Text(option.text("description"), fontSize = 11.sp, color = Muted) } }
                 (option.opt("preview") as? String)?.let { preview ->
                     Text(preview, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 13.sp, letterSpacing = 0.sp, softWrap = false,
                         modifier = Modifier.horizontalScroll(rememberScrollState()).padding(8.dp))

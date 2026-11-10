@@ -13,7 +13,12 @@ enum PromptActions {
             : p
         return String(data: (try? JSONSerialization.data(withJSONObject: content, options: [.sortedKeys])) ?? Data(), encoding: .utf8) ?? ""
     }
-    static func question(_ p: JSON) -> JSON? { let qs = p.array("questions"), i = p.int("current_question"); return qs.indices.contains(i) ? qs[i] : nil }
+    /// The question on the page shown. The review page shows none: it has no page number,
+    /// and reading that as the first question gave its two choices that question's checkboxes.
+    static func question(_ p: JSON) -> JSON? {
+        if p["review"] != nil { return nil }
+        let qs = p.array("questions"), i = p.int("current_question"); return qs.indices.contains(i) ? qs[i] : nil
+    }
     static func details(_ p: JSON) -> String {
         guard let input = p["tool_input"], !(input is NSNull) else { return "" }
         if p.text("tool_name") == "Bash", let j = input as? JSON, Set(j.keys).isSubset(of: ["command", "description"]), !j.text("command").isEmpty { return j.text("command") }

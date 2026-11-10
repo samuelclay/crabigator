@@ -21,6 +21,13 @@ final class CrabigatorTests: XCTestCase {
         XCTAssertEqual(outside.sidebar + outside.detail + outside.gap, 350, "A fold outside this split-view window must not consume its space")
     }
 
+    func testReviewPageDoesNotBorrowTheFirstQuestionsCheckboxes() throws {
+        let prompt: JSON = ["prompt_type": "question", "review": [JSON](), "questions": [
+            ["question": "Toppings?", "multi_select": true, "options": [["label": "Cheese"], ["label": "Olives"]]]]]
+        XCTAssertNil(PromptActions.question(prompt))
+        XCTAssertEqual(PromptActions.options(prompt).map { $0.text("label") }, ["Submit answers", "Cancel"])
+        XCTAssertEqual(try PromptActions.action(prompt, option: 1).body.array("steps").map { $0.text("text") }, ["2"])
+    }
     func testPreviewChoiceConfirmsOnlyThatPage() throws {
         var prompt: JSON = ["prompt_type": "question", "current_question": 0, "cursor_row": 1,
             "questions": [

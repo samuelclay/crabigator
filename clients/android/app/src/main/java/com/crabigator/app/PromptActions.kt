@@ -18,7 +18,10 @@ object PromptActions {
         }
         return input.toString()
     }
-    fun question(prompt: JSONObject) = prompt.optJSONArray("questions")?.optJSONObject(prompt.optInt("current_question", 0))
+    /** The question on the page shown. The review page shows none: it has no page number,
+     *  and reading that as the first question gave its two choices that question's checkboxes. */
+    fun question(prompt: JSONObject) = if (prompt.has("review")) null
+        else prompt.optJSONArray("questions")?.optJSONObject(prompt.optInt("current_question", 0))
     fun title(prompt: JSONObject): String = when (prompt.text("prompt_type")) {
         "question" -> if (prompt.has("review")) "Review your answers" else question(prompt)?.text("question") ?: "A question needs your answer"
         "text" -> if (prompt.text("state") == "permission") "Permission requested. Open the session to review." else "Your session has a question. Reply or open it for context."
