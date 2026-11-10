@@ -27,7 +27,7 @@ import { handleCreateGift, handleListGifts, handleSendGiftEmail, handleGetGift, 
 import { handleAnalyticsBeacon, handleAnalyticsEvent } from './handlers/analytics';
 import { fetchNpmStats, checkTrafficAnomalies } from './handlers/npm-stats';
 import { cleanupZombieSessions } from './handlers/cleanup';
-import { handleTranscribe } from './handlers/transcribe';
+import { deleteVoiceTranscript, handleTranscribe, listVoiceTranscripts } from './handlers/transcribe';
 import {
     startAccountOAuth,
     handleSocialCallback,
@@ -62,7 +62,7 @@ export { SessionListDO } from './durable-objects/SessionListDO';
 export { UsageDO } from './durable-objects/UsageDO';
 
 const router = new Router();
-type RouteHandler = (request: Request, env: Env, params: Record<string, string>) => Promise<Response>;
+type RouteHandler = (request: Request, env: Env, params: Record<string, string>, ctx?: ExecutionContext) => Promise<Response>;
 
 /** How release emails go out, or null when this deployment can't send them. */
 function releaseMailerFor(env: Env): ReleaseMailer | null {
@@ -78,9 +78,9 @@ function withFeature(
     feature: keyof Omit<Capabilities, 'core'>,
     handler: RouteHandler,
 ): RouteHandler {
-    return async (request, env, params) => {
+    return async (request, env, params, ctx) => {
         if (!getRuntimeConfig(request, env).capabilities[feature]) return featureUnavailable(feature);
-        return handler(request, env, params);
+        return handler(request, env, params, ctx);
     };
 }
 
@@ -964,6 +964,9 @@ router.post('/api/gifts/resolve-pending', withFeature('gifts', async (request, e
 // ============================================
 
 router.post('/api/transcribe', withFeature('transcription', handleTranscribe));
+// The saved history stays readable even where transcription is later turned off.
+router.get('/api/transcripts', listVoiceTranscripts);
+router.delete('/api/transcripts/:id', deleteVoiceTranscript);
 
 // ============================================
 // Health check
@@ -992,7 +995,7 @@ export default {
         if (isMcpPath(pathname)) {
             return handleMcp(request, env, ctx);
         }
-        return router.handle(request, env);
+        return router.handle(request, env, ctx);
     },
 
     async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {

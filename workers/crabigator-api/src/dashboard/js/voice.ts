@@ -120,11 +120,15 @@ export const voiceJs = `
                 this.elapsedSeconds = 0;
             }
 
-            transcribeAudio(blob, onProgress) {
+            transcribeAudio(blob, onProgress, sessionId) {
                 return new Promise((resolve, reject) => {
                     const ext = blob.type.includes('ogg') ? 'ogg' : 'webm';
                     const formData = new FormData();
                     formData.append('file', blob, 'recording.' + ext);
+                    // Saved with the transcript in the account's voice history.
+                    formData.append('client', 'web');
+                    if (sessionId) formData.append('session_id', sessionId);
+                    if (this.elapsedSeconds) formData.append('recorded_seconds', String(this.elapsedSeconds));
 
                     const xhr = new XMLHttpRequest();
                     xhr.open('POST', API_BASE + '/transcribe');
@@ -319,7 +323,7 @@ export const voiceJs = `
 
                 var text = await recorder.transcribeAudio(blob, function(progress) {
                     showVoiceOverlay(sessionId, 'progress', progress * 100);
-                });
+                }, sessionId);
 
                 if (text && text.trim()) {
                     var input = document.getElementById('input-' + sessionId);

@@ -1,7 +1,7 @@
 import type { Env } from './types/env';
 import type { ErrorResponse } from './types/api';
 
-type Handler = (request: Request, env: Env, params: Record<string, string>) => Promise<Response>;
+type Handler = (request: Request, env: Env, params: Record<string, string>, ctx?: ExecutionContext) => Promise<Response>;
 
 interface Route {
     method: string;
@@ -41,7 +41,7 @@ export class Router {
         this.addRoute('DELETE', path, handler);
     }
 
-    async handle(request: Request, env: Env): Promise<Response> {
+    async handle(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
         const url = new URL(request.url);
         const method = request.method;
         const path = url.pathname;
@@ -65,7 +65,7 @@ export class Router {
             });
 
             try {
-                const response = await route.handler(request, env, params);
+                const response = await route.handler(request, env, params, ctx);
                 if (response.status === 101) {
                     return response;
                 }

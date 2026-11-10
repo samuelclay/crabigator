@@ -335,7 +335,7 @@ GROUP BY referrer_domain
 ORDER BY visitors DESC"
 ```
 
-Key tables: `page_views`, `analytics_events`, `funnel_events`, `email_signups` (newsletter; `release_emails` holds each release's email and how far its sending got, queued by `make announce-release`), `npm_downloads`, `daily_usage`, `devices`, `accounts`, `account_identities`.
+Key tables: `page_views`, `analytics_events`, `funnel_events`, `email_signups` (newsletter; `release_emails` holds each release's email and how far its sending got, queued by `make announce-release`), `npm_downloads`, `daily_usage`, `devices`, `accounts`, `account_identities`, `voice_transcripts` (every voice transcript, saved by `/api/transcribe` so the apps can list and copy them later; `recorded_seconds` is the app's timer and `audio_seconds` the audio the server received).
 
 ## MCP server
 

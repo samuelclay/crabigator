@@ -374,8 +374,8 @@ export const toolExamples: Record<string, ToolExample> = {
             mime_type: 'audio/webm',
             filename: 'prompt.webm',
         },
-        output: { text: 'approve the install and keep going' },
-        notes: 'Returns text only. Call send_input to submit it.',
+        output: { text: 'approve the install and keep going', id: '5b0c6f1e-8a52-4a0e-9d0b-1f2f6f0c9a11', audio_seconds: 2.4 },
+        notes: 'Saves the transcript to the account voice history and returns it. Call send_input to submit it.',
     },
     watch_pr: {
         args: {
