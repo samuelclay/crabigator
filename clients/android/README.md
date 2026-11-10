@@ -47,7 +47,7 @@ The server supplies complete row-formatted ANSI snapshots. `TerminalText` conver
 
 ## Input
 
-The composer grows to six lines, then scrolls. Its keyboard popover has common shortcuts, navigation and letter pads, and Shift, Ctrl, and Alt modifiers that stay selected until reset or dismissal. Voice input requests microphone access when tapped, shows a live audio-level waveform, and offers Cancel, Edit, or Send. Edit adds the transcription to the draft; Send submits it. Recordings stop after two minutes or when the app leaves the foreground. Audio is transcribed through the same authenticated endpoint as the web dashboard, and temporary recordings are deleted after use.
+The composer grows to six lines, then scrolls. Its keyboard popover has common shortcuts, navigation and letter pads, and Shift, Ctrl, and Alt modifiers that stay selected until reset or dismissal. Voice input requests microphone access when tapped, shows a live audio-level waveform, and offers Cancel, Edit, or Send. Edit adds the transcription to the draft; Send submits it. Recordings stop after two minutes or when the app leaves the foreground; either way the recording is transcribed into the draft. The screen stays on while recording. Audio is transcribed through the same authenticated endpoint as the web dashboard, which saves every transcript to the account. Settings → Voice transcripts lists them all, and a session's Style menu lists that session's, each with Copy and Delete. If transcription fails, the recording is kept so Try again can resend it; otherwise temporary recordings are deleted after use.
 
 ## Appearance
 

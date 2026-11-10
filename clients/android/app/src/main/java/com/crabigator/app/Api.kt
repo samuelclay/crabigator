@@ -70,7 +70,9 @@ class Api(val credentials: Credentials) {
         val (origin, token) = credentials.connection()
         return Request.Builder().url(origin + path).header("Authorization", "Bearer $token")
     }
-    private suspend fun execute(request: Request): JSONObject = suspendCancellableCoroutine { continuation ->
+    // Whisper can take longer than the usual read timeout on a two-minute recording.
+    private val uploads by lazy { client.newBuilder().readTimeout(120, TimeUnit.SECONDS).writeTimeout(60, TimeUnit.SECONDS).build() }
+    private suspend fun execute(request: Request, client: OkHttpClient = this.client): JSONObject = suspendCancellableCoroutine { continuation ->
         val call = client.newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
@@ -96,10 +98,17 @@ class Api(val credentials: Credentials) {
         require(token.isNotBlank()) { "The server did not return a pairing credential." }
         credentials.saveConnection(origin.trim(), token)
     }
-    suspend fun transcribe(file: java.io.File): String = execute(request("/api/transcribe").post(
+    /** The server saves the transcript to the account's history before it answers. */
+    suspend fun transcribe(file: java.io.File, sessionId: String, title: String, seconds: Double): String = execute(request("/api/transcribe").post(
         MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("client", "android").addFormDataPart("session_id", sessionId).addFormDataPart("session_title", title)
+            .addFormDataPart("recorded_seconds", String.format(java.util.Locale.US, "%.1f", seconds))
             .addFormDataPart("file", "recording.m4a", file.asRequestBody("audio/mp4".toMediaType()))
-            .build()).build()).text("text").trim()
+            .build()).build(), uploads).text("text").trim()
+    suspend fun voiceTranscripts(sessionId: String?, before: Long?): JSONObject = call("/api/transcripts" + listOfNotNull(
+        sessionId?.let { "session_id=" + java.net.URLEncoder.encode(it, "UTF-8") }, before?.let { "before=$it" })
+        .joinToString("&").let { if (it.isEmpty()) "" else "?$it" })
+    suspend fun deleteVoiceTranscript(id: String) { execute(request("/api/transcripts/$id").delete().build()) }
     suspend fun snapshot(id: String) = call("/api/mobile/sessions/$id")
     suspend fun action(id: String, route: String, body: JSONObject, revision: Long? = null): JSONObject {
         val payload = JSONObject(body.toString())

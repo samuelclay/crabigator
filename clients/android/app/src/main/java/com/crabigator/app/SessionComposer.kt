@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -52,6 +53,9 @@ import kotlin.math.sqrt
     var levels by remember { mutableStateOf(List(32) { 0f }) }
     var error by remember { mutableStateOf<String?>(null) }
     var processingJob by remember { mutableStateOf<Job?>(null) }
+    var startedAt by remember { mutableLongStateOf(0L) }
+    // A recording whose transcription failed, with its length. It is kept so the user can try again.
+    var failed by remember { mutableStateOf<Pair<java.io.File, Double>?>(null) }
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val recorder = remember(sessionId) { VoiceRecorder(context.applicationContext) }
@@ -62,14 +66,17 @@ import kotlin.math.sqrt
     val buttonAlignment = Modifier.height(singleLineHeight).wrapContentHeight(Alignment.CenterVertically)
     val enabled = active && s.connected && !s.sending && !processing
     val currentDraft by rememberUpdatedState(draft)
+    // A transcript can arrive after the composer was hidden, so read the latest value.
+    val currentActive by rememberUpdatedState(active)
     fun send(text: String) {
-        if (!active || model.state.value.selected?.id != sessionId) return
+        if (!currentActive || model.state.value.selected?.id != sessionId) return
         model.send("answer", JSONObject().put("text", text)) {
             if (model.drafts.value[sessionId] == text) model.setDraft(sessionId, "")
         }
     }
+    fun discardFailed() { failed?.first?.delete(); failed = null }
     fun cancel() {
-        processingJob?.cancel(); processingJob = null
+        processingJob?.cancel(); processingJob = null; discardFailed()
         recorder.cancel(); recording = false; processing = false; focusAfterProcessing = false; startAfterPermission = false
     }
     fun start() {
@@ -77,27 +84,38 @@ import kotlin.math.sqrt
         error = null
         try {
             recorder.start(); recording = true; elapsed = 0; levels = List(32) { 0f }
+            discardFailed(); startedAt = android.os.SystemClock.elapsedRealtime()
             shortcuts = false; keyboard?.hide()
         } catch (e: Exception) { error = e.message ?: "Could not start the microphone." }
     }
-    fun finish(sendImmediately: Boolean) {
-        if (!recording) return
-        recording = false; processing = true
+    fun transcribe(sendImmediately: Boolean, retry: Pair<java.io.File, Double>? = null) {
+        processing = true; error = null; failed = null
+        val seconds = retry?.second ?: ((android.os.SystemClock.elapsedRealtime() - startedAt) / 1000.0)
+        val title = s.selected?.title.orEmpty()
         processingJob = scope.launch {
-            var file: java.io.File? = null
+            var file = retry?.first
             try {
-                file = recorder.finish()
-                val text = model.api.transcribe(file)
+                if (file == null) file = recorder.finish()
+                val text = model.api.transcribe(file, sessionId, title, seconds)
+                file.delete()
                 ensureActive()
                 if (text.isBlank()) { error = "No speech detected."; return@launch }
                 val combined = listOf(currentDraft.trimEnd(), text).filter { it.isNotBlank() }.joinToString("\n")
                 model.setDraft(sessionId, combined)
+                if (!currentActive) return@launch
                 if (sendImmediately && model.state.value.selected?.id == sessionId) send(combined)
                 else focusAfterProcessing = true
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { error = e.message ?: "Could not transcribe the recording." }
-            finally { file?.delete(); if (isActive) processing = false }
+            } catch (e: CancellationException) { file?.delete(); throw e }
+            catch (e: Exception) {
+                if (file != null) failed = file to seconds
+                error = e.message ?: "Could not transcribe the recording."
+            }
+            finally { if (isActive) processing = false }
         }
+    }
+    fun finish(sendImmediately: Boolean) {
+        if (!recording) return
+        recording = false; transcribe(sendImmediately)
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
@@ -107,13 +125,18 @@ import kotlin.math.sqrt
     }
     DisposableEffect(recorder, lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) cancel()
+            // Leaving the app ends the recording, so transcribe what was said instead of dropping it.
+            if (event == Lifecycle.Event.ON_STOP && recording) finish(false)
             if (event == Lifecycle.Event.ON_RESUME && startAfterPermission) { startAfterPermission = false; start() }
         }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer); cancel() }
     }
-    LaunchedEffect(active) { if (!active) { shortcuts = false; cancel() } }
+    // Moving away drops a live recording, but a transcript on its way still lands in the draft.
+    LaunchedEffect(active) { if (!active) { shortcuts = false; if (recording) cancel() } }
+    // Nobody touches the screen while dictating, and locking would end the recording.
+    val view = LocalView.current
+    DisposableEffect(recording) { view.keepScreenOn = recording; onDispose { view.keepScreenOn = false } }
     LaunchedEffect(recording) {
         if (recording) {
             val started = android.os.SystemClock.elapsedRealtime()
@@ -136,7 +159,8 @@ import kotlin.math.sqrt
         HorizontalDivider(color = Muted.copy(alpha = .2f))
         error?.let { message -> Row(Modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-            Control(R.drawable.ic_close, "Dismiss recording error") { error = null }
+            if (failed != null) TextButton({ transcribe(false, failed) }, enabled = !processing) { Text("Try again", color = Peach, fontSize = 12.sp) }
+            Control(R.drawable.ic_close, if (failed != null) "Discard recording" else "Dismiss recording error") { error = null; discardFailed() }
         } }
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             if (recording || processing) {

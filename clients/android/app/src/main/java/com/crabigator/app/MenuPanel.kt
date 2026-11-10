@@ -9,6 +9,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,10 +24,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,11 +46,13 @@ private val Cyan = CrabColors.Cyan
     val prefs by model.preferences.collectAsStateWithLifecycle()
     var lastMenu by remember { mutableStateOf("Settings") }
     if (menu != null) lastMenu = menu
-    val title = when (lastMenu) { "Board style" -> "Style"; "Create session" -> "New session"; else -> lastMenu }
+    val title = when (lastMenu) { "Board style" -> "Style"; "Create session" -> "New session"; "Session voice transcripts" -> "Voice transcripts"; else -> lastMenu }
+    // Pages opened from another menu page, and the page Back returns to.
+    val parents = mapOf("Notifications" to "Settings", "New session" to "Settings", "Watch PR" to "Settings", "Voice transcripts" to "Settings", "Session voice transcripts" to "Style")
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(menu) { if (menu != null) { focus.clearFocus(); keyboard?.hide() } }
-    BackHandler(menu != null) { if (menu in listOf("Notifications", "New session", "Watch PR")) navigate("Settings") else close() }
+    BackHandler(menu != null) { parents[menu]?.let(navigate) ?: close() }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val phone = LocalConfiguration.current.smallestScreenWidthDp < 600
@@ -76,20 +81,26 @@ private val Cyan = CrabColors.Cyan
                 shape = RoundedCornerShape(16.dp), shadowElevation = 20.dp, border = BorderStroke(1.dp, Color(0xFF37414E))) {
                 Column {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (lastMenu in listOf("Notifications", "New session", "Watch PR")) Control(R.drawable.ic_back, "Back to settings") { navigate("Settings") }
+                        parents[lastMenu]?.let { parent -> Control(R.drawable.ic_back, "Back to ${parent.lowercase()}") { navigate(parent) } }
                         Text(title, Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Medium)
                         Control(R.drawable.ic_close, "Close menu", onClick = close)
                     }
                     HorizontalDivider(color = Color(0xFF303A46))
                     AnimatedContent(lastMenu, label = "Menu page", modifier = Modifier.weight(1f, fill = false)) { page ->
                         if (page == "Style" || page == "Board style") {
-                            StyleMenu(prefs, terminalInitially = page == "Style", update = model::style)
+                            Column {
+                                // The session's own menu also reaches that session's voice transcripts.
+                                if (page == "Style") TextButton({ navigate("Session voice transcripts") }, Modifier.fillMaxWidth().padding(horizontal = 8.dp)) { Text("Voice transcripts", color = Cyan) }
+                                StyleMenu(prefs, terminalInitially = page == "Style", update = model::style)
+                            }
                         } else {
                             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                 when (page) {
                                     "Notifications" -> NotificationMenu(notifications)
                                     "New session", "Create session" -> BoardActionMenu(model, watch = false)
                                     "Watch PR" -> BoardActionMenu(model, watch = true)
+                                    "Voice transcripts" -> VoiceTranscriptsMenu(model, null)
+                                    "Session voice transcripts" -> VoiceTranscriptsMenu(model, model.state.value.selected?.id)
                                     else -> SettingsMenu(model, prefs, navigate)
                                 }
                             }
@@ -228,6 +239,7 @@ private val Cyan = CrabColors.Cyan
     }
     MenuSection("Appearance") { TextButton({ navigate("Board style") }, Modifier.fillMaxWidth()) { Text("Style", color = Cyan) } }
     MenuSection("Notifications") { TextButton({ navigate("Notifications") }, Modifier.fillMaxWidth()) { Text(Notifications.status(context), color = Cyan) } }
+    MenuSection("Voice") { TextButton({ navigate("Voice transcripts") }, Modifier.fillMaxWidth()) { Text("Voice transcripts", color = Cyan) } }
     MenuSection("Session list") {
         Text("Position", color = Muted, fontSize = 12.sp)
         Choices(listOf("Left", "Right"), if (p.sidebarRight) 1 else 0) { n -> model.style { it.copy(sidebarRight = n == 1) } }
@@ -342,6 +354,71 @@ private val Cyan = CrabColors.Cyan
     }, enabled = !busy && BoardActions.watchTarget(target) != null) { Text(if (busy) "Sending…" else "Watch PR") }
     if (message.isNotBlank()) Text(message, color = if (failed) MaterialTheme.colorScheme.error else Mint)
 }
+/**
+ * Every voice transcript the account has made. The server saves each one as it is
+ * transcribed, so a transcript that never reached its session can still be copied here.
+ */
+@Composable private fun VoiceTranscriptsMenu(model: SessionModel, sessionId: String?) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    var everySession by remember { mutableStateOf(sessionId == null) }
+    var rows by remember { mutableStateOf(listOf<JSONObject>()) }
+    var next by remember { mutableStateOf<Long?>(null) }
+    var loaded by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
+    var copied by remember { mutableStateOf("") }
+    val filter = if (everySession) null else sessionId
+    suspend fun load(more: Boolean) {
+        try {
+            val page = model.api.voiceTranscripts(filter, if (more) next else null)
+            rows = (if (more) rows else emptyList()) + page.array("transcripts")
+            next = if (page.isNull("next_cursor")) null else page.optLong("next_cursor")
+            message = ""
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { message = e.message ?: "Could not load voice transcripts." }
+        loaded = true
+    }
+    fun copy(text: String, id: String) { clipboard.setText(AnnotatedString(text)); copied = id }
+    fun clock(seconds: Double) = "${seconds.toInt() / 60}:${(seconds.toInt() % 60).toString().padStart(2, '0')}"
+    fun seconds(row: JSONObject, key: String) = if (row.isNull(key)) null else row.optDouble(key)
+    LaunchedEffect(filter) { loaded = false; load(false) }
+    LaunchedEffect(copied) { if (copied.isNotEmpty()) { kotlinx.coroutines.delay(2000); copied = "" } }
+    if (sessionId != null) Choices(listOf("This session", "All sessions"), if (everySession) 1 else 0) { everySession = it == 1 }
+    if (message.isNotEmpty()) Text(message, color = MaterialTheme.colorScheme.error)
+    if (!loaded) LinearProgressIndicator(Modifier.fillMaxWidth())
+    else if (rows.isEmpty() && message.isEmpty()) Text("No voice transcripts yet. Every recording you transcribe is saved here.", color = Muted, fontSize = 13.sp)
+    if (rows.isNotEmpty()) TextButton({ copy(rows.joinToString("\n\n") { it.text("text") }, "all") }) { Text(if (copied == "all") "Copied" else "Copy all", color = Cyan) }
+    rows.forEach { row ->
+        val id = row.text("id")
+        val recorded = seconds(row, "recorded_seconds")
+        val audio = seconds(row, "audio_seconds")
+        key(id) {
+            Surface(color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFF303A46))) {
+                Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, bottom = 12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val date = android.text.format.DateUtils.formatDateTime(context, row.optLong("created_at") * 1000,
+                            android.text.format.DateUtils.FORMAT_SHOW_DATE or android.text.format.DateUtils.FORMAT_SHOW_TIME or android.text.format.DateUtils.FORMAT_ABBREV_MONTH)
+                        Text(listOfNotNull(date, (audio ?: recorded)?.let(::clock)).joinToString(" · "), Modifier.weight(1f), color = Muted, fontSize = 12.sp)
+                        TextButton({ copy(row.text("text"), id) }) { Text(if (copied == id) "Copied" else "Copy", color = Cyan) }
+                        TextButton({ scope.launch {
+                            try { model.api.deleteVoiceTranscript(id); rows = rows.filter { it.text("id") != id } }
+                            catch (e: Exception) { message = e.message ?: "Could not delete the transcript." }
+                        } }) { Text("Delete", color = Muted) }
+                    }
+                    Column(Modifier.padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (filter == null && row.text("session_title").isNotBlank()) Text(row.text("session_title"), color = Cyan, fontSize = 12.sp, maxLines = 1)
+                        // The app timed more speech than the server received: audio was lost before upload.
+                        if (recorded != null && audio != null && recorded - audio > 5) Text("Recorded ${clock(recorded)}, but only ${clock(audio)} of audio arrived.", color = Peach, fontSize = 12.sp)
+                        SelectionContainer { Text(row.text("text"), fontSize = 14.sp) }
+                    }
+                }
+            }
+        }
+    }
+    if (next != null) TextButton({ scope.launch { load(true) } }) { Text("Load more", color = Cyan) }
+}
+
 @Composable private fun NotificationMenu(requestPermission: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
