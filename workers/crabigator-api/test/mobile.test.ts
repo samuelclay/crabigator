@@ -645,3 +645,38 @@ it.each(['ios', 'android'])('records unknown %s outcomes without resending', asy
         expect(history.notifications[0]).toMatchObject({ status: 'unknown', attempts: [{ status: 'unknown', http_status: null }] });
     } finally { mocked.mockRestore(); }
 });
+
+it('shows the next page after a phone ticks boxes and continues', async () => {
+    const stub = testEnv.SESSION.get(testEnv.SESSION.idFromName('mobile-multi-select-pages'));
+    const desktop = (await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } })).webSocket!;
+    desktop.accept();
+    const snapshot = async () => (await stub.fetch('https://internal/snapshot'))
+        .json<{ prompt_revision: number; attention_pending: boolean; prompt: { current_question?: number; checked?: number[] } | null }>();
+    const questions = [
+        { question: 'Toppings?', multi_select: true, options: [{ label: 'Cheese', value: '1' }, { label: 'Olives', value: '2' }] },
+        { question: 'Crust?', options: [{ label: 'Thin', value: '1' }] },
+    ];
+    const page = (fields: object) => desktop.send(JSON.stringify({ type: 'prompt', prompt: { prompt_type: 'question', questions, ...fields } }));
+    const keys = async (steps: unknown[]) => {
+        const reply = await stub.fetch('https://internal/key-sequence', { method: 'POST',
+            body: JSON.stringify({ steps, expected_prompt_revision: (await snapshot()).prompt_revision }) });
+        await reply.text();
+        return reply.status;
+    };
+    try {
+        desktop.send(JSON.stringify({ type: 'state', state: 'question' }));
+        page({ current_question: 0, cursor_row: 1 });
+        await expect.poll(async () => (await snapshot()).attention_pending).toBe(true);
+        expect(await keys([{ type: 'text', text: '1' }])).toBe(200);
+        expect((await snapshot()).attention_pending).toBe(false);
+        page({ current_question: 0, checked: [1], cursor_row: 1 });
+        await expect.poll(async () => (await snapshot()).prompt?.checked).toEqual([1]);
+        expect(await keys([{ type: 'text', text: '2' }])).toBe(200);
+        page({ current_question: 0, checked: [1, 2], cursor_row: 1 });
+        await expect.poll(async () => (await snapshot()).prompt?.checked).toEqual([1, 2]);
+        expect(await keys([{ type: 'key', key: 'down' }, { type: 'key', key: 'enter' }])).toBe(200);
+        page({ current_question: 1, cursor_row: 1 });
+        await expect.poll(async () => (await snapshot()).prompt?.current_question).toBe(1);
+        expect((await snapshot()).attention_pending).toBe(true);
+    } finally { desktop.close(); }
+});
