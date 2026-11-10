@@ -1,0 +1,17 @@
+[0m
+[38;5;231;1mWhich[Ctoppings[Cdo you want on your pizza?[0m
+[0m
+[38;5;153m❯[C[38;5;246m1.[C[38;5;114m[✔][m [38;5;153mPepperoni[0m
+[5C    [38;5;246mClassic cured[Cpork[Cand beef[Cslices that crisp up at the edges.[0m
+[2C[38;5;246m2.[C[38;5;114m[✔][m Mushrooms[0m
+[5C    [38;5;246mSliced mushrooms for an earthy,[Csavory flavor.[0m
+[2C[38;5;246m3.[C[m[ ] Olives[0m
+[5C    [38;5;246mBlack olives that add a briny, salty[Cbite.[0m
+[2C[38;5;246m4.[m [ ] Extra cheese[0m
+         [38;5;246mA double layer of mozzarella for a richer, gooier pizza.[0m
+[2C[38;5;246m5. [m[ ] [38;5;246mType something[0m
+[5C[1mNext[0m
+[38;5;246m──────────────────────────────────────────────────────────────────────────────────────────[0m
+[2C6.[CChat[Cabout[Cthis[0m
+[0m
+[38;5;246mEnter to select · Tab/Arrow keys to navigate · Esc to cancel[0m

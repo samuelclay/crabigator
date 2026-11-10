@@ -399,13 +399,16 @@ fn parse_claude(screen_content: &str) -> Option<QuestionScreen> {
     let lines: Vec<&str> = stripped.lines().collect();
 
     // The dialog is the last header on screen; earlier ones are scrollback.
-    let (header_idx, single_question) = (0..lines.len()).rev().find_map(|i| {
+    let header = (0..lines.len()).rev().find_map(|i| {
         if is_tab_header(lines[i]) {
             Some((i, false))
         } else {
             is_single_question_header(&lines, i).then_some((i, true))
         }
-    })?;
+    });
+    let Some((header_idx, single_question)) = header else {
+        return parse_without_header(&lines);
+    };
     let body: Vec<&str> = lines[header_idx + 1..]
         .iter()
         .take_while(|line| !line.trim().starts_with('━'))
@@ -432,6 +435,63 @@ fn parse_claude(screen_content: &str) -> Option<QuestionScreen> {
         .nth(header_idx)
         .and_then(highlighted_tab);
     parse_page(&body, page_index)
+}
+
+/// A dialog taller than the screen pushes its header off the top, and
+/// sometimes the question with it. What is left still ends the way only
+/// this dialog does, so read the rows that remain:
+///
+/// ```text
+///   3. [ ] Olives
+///   4. [ ] Type something
+///      Next
+/// ──────────────────────────────
+///   5. Chat about this
+///
+/// Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+/// ```
+///
+/// The review page ends in its own two rows instead. With no tab strip
+/// there is no page number: the caller matches the question by its text
+/// or its rows.
+fn parse_without_header(lines: &[&str]) -> Option<QuestionScreen> {
+    let shown: Vec<usize> = (0..lines.len())
+        .filter(|&i| !lines[i].trim().is_empty())
+        .collect();
+    // A divider above the rows would be the top of a dialog that fits,
+    // and that one has a header.
+    let cut_off_above = |end: usize| !lines[..end].iter().any(|line| is_divider(line));
+    let text = |i: usize| lines[i].trim().trim_start_matches('❯').trim();
+
+    match shown.as_slice() {
+        [.., divider, chat, footer]
+            if is_footer(lines[*footer])
+                && text(*chat).ends_with(". Chat about this")
+                && is_divider(lines[*divider])
+                && cut_off_above(*divider) =>
+        {
+            // A lone chip left at the top is the one-question dialog's
+            // header, whose divider scrolled off.
+            let is_chip = |line: &str| line.trim().starts_with(['☐', '☒']);
+            match shown.first() {
+                Some(&chip) if is_chip(lines[chip]) => {
+                    parse_page(&lines[chip + 1..*divider], Some(0))
+                }
+                _ => parse_page(&lines[..*divider], None),
+            }
+        }
+        [.., ask, submit, cancel]
+            if text(*ask) == "Ready to submit your answers?"
+                && text(*submit) == "1. Submit answers"
+                && text(*cancel) == "2. Cancel"
+                && cut_off_above(*ask) =>
+        {
+            Some(QuestionScreen::Review {
+                answers: parse_review_answers(&lines[..*ask]),
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Which tab the strip highlights. Claude draws the current tab on a
@@ -1076,8 +1136,103 @@ Ready to submit your answers?
   2. No
 ";
         assert_eq!(QuestionScreen::parse(todo), None);
-        let without_divider = ONE_QUESTION_ON_THICK.replacen('─', "x", 1);
-        assert_eq!(QuestionScreen::parse(&without_divider), None);
+        let without_footer = ONE_QUESTION_ON_THICK.replace("Enter", "Press");
+        assert_eq!(QuestionScreen::parse(&without_footer), None);
+    }
+
+    #[test]
+    fn reads_a_one_question_dialog_whose_divider_scrolled_off() {
+        let from_chip = &ONE_QUESTION_ON_THICK[ONE_QUESTION_ON_THICK.find('☐').unwrap()..];
+        assert_eq!(
+            QuestionScreen::parse(from_chip),
+            QuestionScreen::parse(ONE_QUESTION_ON_THICK)
+        );
+    }
+
+    #[test]
+    fn reads_a_page_taller_than_the_screen() {
+        // The tab strip scrolled off the top; the question is still there.
+        let screen = include_str!("testdata/page_taller_than_screen.txt");
+        let Some(QuestionScreen::Page {
+            question,
+            rows,
+            submit_row,
+            page_index,
+        }) = QuestionScreen::parse(screen)
+        else {
+            panic!("expected a page");
+        };
+        assert_eq!(question, "Which toppings do you want on your pizza?");
+        assert_eq!(page_index, None);
+        assert_eq!(submit_row, Some(false));
+        let ticked: Vec<u32> = rows
+            .iter()
+            .filter(|row| row.checked == Some(true))
+            .map(|row| row.number)
+            .collect();
+        assert_eq!(ticked, [1, 2]);
+        assert_eq!(rows.len(), 5);
+        assert!(rows[0].cursor);
+
+        // Cut off further, the question goes too and the first rows with it.
+        let stripped = strip_ansi_codes(screen);
+        let from_olives = stripped.find("3. [ ] Olives").unwrap();
+        let Some(QuestionScreen::Page { rows, .. }) =
+            QuestionScreen::parse(&format!("  {}", &stripped[from_olives..]))
+        else {
+            panic!("expected a page");
+        };
+        let numbers: Vec<u32> = rows.iter().map(|row| row.number).collect();
+        assert_eq!(numbers, [3, 4, 5]);
+    }
+
+    #[test]
+    fn reads_a_review_page_taller_than_the_screen() {
+        let screen = "\
+   → Thin
+ ● What size pizza do you want?
+   → Small
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
+";
+        assert_eq!(
+            QuestionScreen::parse(screen),
+            Some(QuestionScreen::Review {
+                answers: vec![ReviewAnswer {
+                    question: "What size pizza do you want?".to_string(),
+                    answer: "Small".to_string(),
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn needs_the_whole_ending_to_read_a_page_without_its_header() {
+        // A permission menu numbers its rows and ends in key hints too.
+        let permission = "\
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend
+";
+        assert_eq!(QuestionScreen::parse(permission), None);
+        // A dialog that fits has its header; without one this is something else.
+        let fits = "\
+──────────────────────────────
+Which crust?
+
+❯ 1. Thin
+  2. Type something.
+──────────────────────────────
+  3. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+";
+        assert_eq!(QuestionScreen::parse(fits), None);
     }
 
     #[test]

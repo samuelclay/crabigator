@@ -786,7 +786,8 @@ impl QuestionPageState {
             }) => {
                 let current_question = page_index
                     .filter(|&i| i < questions.len())
-                    .or_else(|| find_question(questions, question));
+                    .or_else(|| find_question(questions, question))
+                    .or_else(|| find_question_by_rows(questions, rows));
                 let option_count = current_question
                     .map(|i| questions[i].options.len() as u32)
                     .unwrap_or_else(|| rows.len().saturating_sub(1) as u32);
@@ -837,6 +838,33 @@ fn find_question(questions: &[crate::platforms::Question], shown: &str) -> Optio
             .iter()
             .position(|q| !q.is_empty() && (q.starts_with(&shown) || shown.starts_with(q)))
     })
+}
+
+/// Find the question by the option rows on screen. A page taller than the
+/// screen can lose its tab strip and its question off the top, but the
+/// rows left still carry their numbers and labels. `None` unless exactly
+/// one question fits.
+fn find_question_by_rows(
+    questions: &[crate::platforms::Question],
+    rows: &[crate::parsers::question_prompt::ScreenRow],
+) -> Option<usize> {
+    let fits = |q: &crate::platforms::Question| {
+        let mut labels = rows
+            .iter()
+            .filter_map(|row| {
+                let option = q.options.get((row.number as usize).checked_sub(1)?)?;
+                Some((row.label.trim(), option.label.trim()))
+            })
+            .peekable();
+        // The screen may cut a long label short or add a ✔ after a chosen one.
+        labels.peek().is_some()
+            && labels.all(|(shown, label)| {
+                !shown.is_empty() && (shown.starts_with(label) || label.starts_with(shown))
+            })
+    };
+    let mut fitting = questions.iter().enumerate().filter(|(_, q)| fits(q));
+    let (index, _) = fitting.next()?;
+    fitting.next().is_none().then_some(index)
 }
 
 /// Helper for building events from crabigator's internal state
@@ -1311,6 +1339,30 @@ pizza?
         assert_eq!(page.custom_text.as_deref(), Some("extra garlic"));
         assert_eq!(page.cursor_row, Some(6));
         assert!(page.review.is_none());
+    }
+
+    /// A page taller than the screen loses its tab strip and its question
+    /// off the top. The rows left must still name the page and its ticks.
+    #[test]
+    fn mirrors_a_page_cut_off_above_its_rows() {
+        let screen = QuestionScreen::parse(
+            "\
+         Sliced, roasted.
+  3. [✔] Mushrooms
+  4. [ ] Olives
+  5. [ ] Type something
+❯    Submit
+────────────
+  6. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+",
+        )
+        .unwrap();
+        let page = QuestionPageState::from_screen(&questions(), Some(&screen));
+        assert_eq!(page.current_question, Some(1));
+        assert_eq!(page.checked, vec![3]);
+        assert_eq!(page.cursor_row, Some(6));
     }
 
     /// Claude draws a `│` before each line of a long question. The page
