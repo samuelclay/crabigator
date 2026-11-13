@@ -13,6 +13,9 @@ The user's statusline is looked up on every run, in Claude Code's order
 settings.json), so a statusline changed during the session still shows.
 """
 
+# Keep `dict | None` hints from running, so macOS's Python 3.9 can load this.
+from __future__ import annotations
+
 import json
 import os
 import subprocess

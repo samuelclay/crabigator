@@ -24,6 +24,9 @@ after the last one completes it.
 """
 # crabigator-hook-version: {VERSION}
 
+# Keep `int | None` hints from running, so macOS's Python 3.9 can load the hook.
+from __future__ import annotations
+
 import json
 import hashlib
 import os

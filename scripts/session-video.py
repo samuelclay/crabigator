@@ -16,6 +16,8 @@ Environment variables:
     TAVUS_API_KEY       - Required. Your Tavus API key.
     ANTHROPIC_API_KEY   - Required. For Claude-powered summarization.
 """
+from __future__ import annotations
+
 import argparse
 import glob
 import json
