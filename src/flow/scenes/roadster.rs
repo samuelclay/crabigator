@@ -284,7 +284,9 @@ impl Roadster {
     fn layout(&mut self, d: PixelDials) {
         self.w = (d.columns * 2) as f64;
         self.h = (d.rows * 2) as f64;
-        self.tall = d.tall;
+        // The large scene uses 30 pixels below the skyline, plus room for
+        // jumps. Short portrait columns need the compact horizontal scene.
+        self.tall = d.tall && d.rows >= 20;
         let h = self.h;
         if self.tall {
             self.k = 1.4;

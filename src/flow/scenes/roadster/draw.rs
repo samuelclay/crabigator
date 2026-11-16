@@ -1195,3 +1195,36 @@ impl Roadster {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_portrait_columns_keep_both_lanes_and_jumping_car_visible() {
+        for (columns, rows) in [(17, 9), (19, 10), (21, 11), (23, 12), (24, 19), (24, 20)] {
+            let mut road = Roadster::new(7.0);
+            road.ensure(columns, rows);
+            assert!(
+                road.far_walk > 0.0,
+                "sky and both lanes fit at {columns}x{rows}"
+            );
+            road.base.dials.strength = 10.0;
+            let mut airborne = false;
+            for _ in 0..1500 {
+                road.step();
+                airborne |= road.jump.is_some_and(|j| j.wait <= 0.0);
+                let mut pixels = Painter::new(columns, rows);
+                road.paint_main(&mut pixels, road.base.frame_dials());
+                assert!(
+                    pixels.keep.iter().any(|&keep| keep != 0),
+                    "car stays visible through jumps at {columns}x{rows}"
+                );
+            }
+            assert!(
+                airborne,
+                "freeway traffic triggers a jump at {columns}x{rows}"
+            );
+        }
+    }
+}
