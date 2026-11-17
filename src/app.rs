@@ -103,7 +103,7 @@ fn cloud_key_bytes(key: &str) -> Option<&'static [u8]> {
 /// Encode a dashboard/MCP answer for the child prompt.
 ///
 /// Newlines must not be typed as Enter (`\r`), which submits.
-/// Codex receives an explicit paste; Claude and opencode use Ctrl+J (`\n`).
+/// Claude and Codex receive an explicit paste; opencode uses Ctrl+J (`\n`).
 /// Grok uses Alt+Enter (`\x1b\r`) because Ctrl+J is a scroll binding there.
 fn encode_remote_answer(text: &str, platform: PlatformKind) -> Vec<u8> {
     let text = text.trim_end().replace("\r\n", "\n").replace('\r', "\n");
@@ -112,15 +112,18 @@ fn encode_remote_answer(text: &str, platform: PlatformKind) -> Vec<u8> {
     }
     match platform {
         PlatformKind::Grok => text.replace('\n', "\x1b\r").into_bytes(),
+        // Keep single-key menu choices (digits, y/n) as keystrokes.
+        PlatformKind::Claude if text.len() == 1 => text.into_bytes(),
         // Explicit paste boundaries bypass Codex's timing-based paste detection,
         // which otherwise turns the following Enter into another newline.
-        PlatformKind::Codex => [
+        // Claude can drop the prefix when a long answer arrives as raw keys.
+        PlatformKind::Claude | PlatformKind::Codex => [
             escape::BRACKETED_PASTE_START,
             text.as_bytes(),
             escape::BRACKETED_PASTE_END,
         ]
         .concat(),
-        PlatformKind::Claude | PlatformKind::Opencode => text.into_bytes(),
+        PlatformKind::Opencode => text.into_bytes(),
     }
 }
 
@@ -3424,7 +3427,7 @@ mod tests {
     fn remote_answer_keeps_a_single_line() {
         assert_eq!(
             encode_remote_answer("hello", PlatformKind::Claude),
-            b"hello"
+            b"\x1b[200~hello\x1b[201~"
         );
         assert_eq!(encode_remote_answer("hello", PlatformKind::Grok), b"hello");
     }
@@ -3433,7 +3436,7 @@ mod tests {
     fn remote_answer_turns_newlines_into_prompt_newlines() {
         assert_eq!(
             encode_remote_answer("hello\nworld", PlatformKind::Claude),
-            b"hello\nworld"
+            b"\x1b[200~hello\nworld\x1b[201~"
         );
         assert_eq!(
             encode_remote_answer("hello\nworld", PlatformKind::Grok),
@@ -3448,6 +3451,30 @@ mod tests {
             b"\x1b[200~hello\nworld\x1b[201~"
         );
         assert!(encode_remote_answer("  \n", PlatformKind::Opencode).is_empty());
+    }
+
+    #[test]
+    fn remote_claude_answer_preserves_menu_keys() {
+        for text in ["1", "2", "9", "y", "n"] {
+            assert_eq!(
+                encode_remote_answer(text, PlatformKind::Claude),
+                text.as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn remote_claude_answer_pastes_the_whole_long_transcript() {
+        // Cross several input-read boundaries, including with multibyte text.
+        let text = format!("Beginning: {}\nEnd.", "voice café 🦀 ".repeat(1000));
+        let encoded = encode_remote_answer(&text, PlatformKind::Claude);
+        assert!(encoded.starts_with(escape::BRACKETED_PASTE_START));
+        assert!(encoded.ends_with(escape::BRACKETED_PASTE_END));
+        assert_eq!(
+            &encoded[escape::BRACKETED_PASTE_START.len()
+                ..encoded.len() - escape::BRACKETED_PASTE_END.len()],
+            text.as_bytes()
+        );
     }
 
     #[test]
