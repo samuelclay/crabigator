@@ -18,6 +18,19 @@ struct RosterSection: Identifiable {
     var id: String { "\(machine.count):\(machine)|\(age?.rawValue ?? -1)|\(project)" }
 }
 
+/// A board row identified by its section as well as its own ID. A lazy stack matches rows by
+/// ID alone: when "Group by computer" moved rows to other sections, the stack kept their old
+/// views, which no longer followed that setting or "Show recaps".
+struct SectionRow<Value>: Identifiable {
+    var id: String
+    var value: Value
+}
+extension RosterSection {
+    func rows<Value: Identifiable>(_ values: [Value]) -> [SectionRow<Value>] where Value.ID == String {
+        values.map { SectionRow(id: id + "|" + $0.id, value: $0) }
+    }
+}
+
 struct BoardPRGroup: Identifiable {
     var pr: PullRequest
     var sessions: [Session]

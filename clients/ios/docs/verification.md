@@ -2,6 +2,14 @@
 
 The updated native app is installed and paired on ClayPad Mini. The October 13 checks below verify its live terminal, board navigation and real APNs delivery. Earlier checks on ClayPad Air, ClayPhone SE 3 and simulators remain recorded below.
 
+## Rows follow board settings after regrouping — November 18
+
+Turning Group by computer off left the rows already on screen without their computer names. Those rows then ignored Show recaps as well. The lazy stack matched each row by session ID alone, so a row that moved to another section kept its old view. Rows are now identified by section and session.
+
+`NavigationTests/testVisibleRowsFollowBoardSettings` flips the real switches on a sample roster with two computers (`CRABIGATOR_TEST_LAYOUT=1` and `CRABIGATOR_TEST_COMPUTERS=1`), on both the PR board and the List. On the iPad Air 11-inch (M4) simulator, 15 of 17 visible rows lacked the name before the fix. After it, the test and all 47 unit tests pass. The fixed build is installed on ClayPad Air.
+
+Not verified: the switch on a physical iPad, and the visible-stats toggles, which reach rows the same way.
+
 ## Waiting sessions age normally — October 19
 
 The board already refreshes its roster every 12 seconds while foregrounded. Its age calculation treated questions and permission requests as current activity on every refresh, so a session waiting for hours stayed in Last hour. iOS now uses the last prompt for waiting sessions in both session and PR grouping. Only active thinking stays current; waiting sessions keep their attention indicators.

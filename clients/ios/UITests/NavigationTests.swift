@@ -42,6 +42,67 @@ final class NavigationTests: XCTestCase {
         capture("Adaptive terminal keyboard")
     }
 
+    /// Rows that are already on screen must redraw when a board setting changes.
+    func testVisibleRowsFollowBoardSettings() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CRABIGATOR_TEST_LAYOUT"] = "1"
+        app.launchEnvironment["CRABIGATOR_TEST_COMPUTERS"] = "1"
+        app.launch()
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
+        for mode in ["PR board", "List"] {
+            let control = app.buttons[mode]
+            if !(control.value as? String ?? "").hasPrefix("Selected") { control.tap() }
+            XCTAssertTrue(app.buttons["Machine First computer"].waitForExistence(timeout: 5), "\(mode): a grouped board starts with computer headings")
+            checkRows(in: app, mode, "grouped", contain: "computer", false)
+            setSwitch("Show recaps", on: true, in: app)
+            checkRows(in: app, mode, "grouped with recaps", contain: "Sample recap", true)
+            setSwitch("Show recaps", on: false, in: app)
+            checkRows(in: app, mode, "grouped without recaps", contain: "Sample recap", false)
+
+            setSwitch("Group by computer", on: false, in: app)
+            XCTAssertFalse(app.buttons["Machine First computer"].exists, "\(mode): a combined board has no computer headings")
+            capture("\(mode) combined")
+            checkRows(in: app, mode, "combined", contain: "computer", true)
+
+            setSwitch("Show recaps", on: true, in: app)
+            capture("\(mode) with recaps")
+            checkRows(in: app, mode, "with recaps", contain: "Sample recap", true)
+            setSwitch("Show recaps", on: false, in: app)
+            checkRows(in: app, mode, "without recaps", contain: "Sample recap", false)
+
+            setSwitch("Group by computer", on: true, in: app)
+            XCTAssertTrue(app.buttons["Machine First computer"].waitForExistence(timeout: 5), "\(mode): grouping again restores computer headings")
+            capture("\(mode) grouped again")
+            checkRows(in: app, mode, "grouped again", contain: "computer", false)
+        }
+    }
+
+    /// Every session row on screen must show, or leave out, the given text. A combined board
+    /// names each row's own computer: `first-…` rows run on "First computer".
+    private func checkRows(in app: XCUIApplication, _ mode: String, _ step: String, contain text: String, _ expected: Bool) {
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Session ")).allElementsBoundByIndex.filter(\.isHittable)
+        XCTAssertGreaterThan(rows.count, 5, "\(mode), \(step): the board should show several rows")
+        let wrong = rows.compactMap { row -> String? in
+            let id = row.identifier, label = row.label
+            let wanted = text == "computer" ? (id.hasPrefix("Session first") ? "First computer" : "Second computer") : text
+            return label.contains(wanted) == expected ? nil : "\(id) [\(label)]"
+        }
+        XCTAssertTrue(wrong.isEmpty, "\(mode), \(step): \(wrong.count) of \(rows.count) rows \(expected ? "lack" : "still show") \"\(text)\": \(wrong.joined(separator: "; "))")
+    }
+
+    private func setSwitch(_ name: String, on: Bool, in app: XCUIApplication) {
+        app.buttons["Settings"].tap()
+        let toggle = app.switches[name]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        if (toggle.value as? String == "1") != on { toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap() }
+        XCTAssertEqual(toggle.value as? String, on ? "1" : "0", "\(name) should be \(on ? "on" : "off")")
+        // A tap outside the popover closes it.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.9)).tap()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: toggle)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed)
+        Thread.sleep(forTimeInterval: 0.6)
+    }
+
     func testFullPageSwipeWhileLoading() throws {
         let app = try openSession(holdLoading: true)
         XCTAssertTrue(app.activityIndicators["session-loading"].waitForExistence(timeout: 5))

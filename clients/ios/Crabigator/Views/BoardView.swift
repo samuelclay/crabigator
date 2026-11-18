@@ -120,10 +120,11 @@ struct BoardView: View {
                                         if !group.project.isEmpty { Text(group.project).boardFont(12).foregroundStyle(Crab.yellow).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.top, spacing.gap(4)) }
                                         if list {
                                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: columns), spacing: spacing.gap(8)) {
-                                                ForEach(group.sessions) { session in sessionButton(session, list: true, full: false, order: order) }
+                                                ForEach(group.rows(group.sessions)) { row in sessionButton(row.value, list: true, full: false, order: order) }
                                             }
                                         } else {
-                                            ForEach(group.pullRequests) { block in
+                                            ForEach(group.rows(group.pullRequests)) { row in
+                                                let block = row.value
                                                 VStack(alignment: .leading, spacing: spacing.gap(4)) {
                                                     Group {
                                                         if let url = URL(string: block.pr.url), url.scheme == "https" {
@@ -136,7 +137,7 @@ struct BoardView: View {
                                                     ForEach(block.sessions) { session in sessionButton(session, list: false, full: width >= 840, order: order, prs: []) }
                                                 }
                                             }
-                                            ForEach(group.sessions) { session in sessionButton(session, list: false, full: width >= 840, order: order) }
+                                            ForEach(group.rows(group.sessions)) { row in sessionButton(row.value, list: false, full: width >= 840, order: order) }
                                         }
                                     }
                                 }

@@ -12,7 +12,7 @@ struct AdaptiveLayoutFixture: View {
                 model.navigation.conductor = false
                 model.navigation.expanded = true
                 model.preferences = Preferences()
-                model.sessions = ["Add dark mode", "Improve search"].enumerated().map { index, title in
+                model.sessions = ProcessInfo.processInfo.environment["CRABIGATOR_TEST_COMPUTERS"] == "1" ? Self.twoComputers() : ["Add dark mode", "Improve search"].enumerated().map { index, title in
                     Session(["session_id": "layout-\(index)", "title": title, "repo_owner": "example", "repo_name": "website", "cwd": "/sample/website", "device_name": "Demo computer", "state": "complete", "platform": "codex", "started_at": Int(Date().timeIntervalSince1970), "prompts_changed_at": Int(Date().timeIntervalSince1970), "active": true])
                 }
                 model.prs = []
@@ -27,6 +27,18 @@ struct AdaptiveLayoutFixture: View {
                 model.stream.connected = true
                 model.stream.desktopStatusKnown = true
             }
+    }
+    /// Forty sessions that alternate between two computers, newest first. Grouped by
+    /// computer, the second computer starts below the screen; combined, the rows interleave.
+    private static func twoComputers() -> [Session] {
+        let now = Int(Date().timeIntervalSince1970)
+        return (0..<40).map { index in
+            let first = index % 2 == 0
+            return Session(["session_id": "\(first ? "first" : "second")-\(index / 2)", "title": "Sample task \(index + 1)", "repo_owner": "example", "repo_name": "website", "cwd": "/sample/website",
+                            "device_name": first ? "First computer" : "Second computer", "state": "complete", "platform": "codex", "active": true,
+                            "started_at": now - 7200, "prompts_changed_at": now - index * 60, "completions_changed_at": now - index * 60,
+                            "recap": ["headline": "Sample recap \(index + 1)", "generated_at": (now - index * 60) * 1000]])
+        }
     }
 }
 
