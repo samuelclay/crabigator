@@ -1,4 +1,6 @@
 // Dashboard JavaScript - constants
+import { FONT_SCALES, TERMINAL_HEIGHTS } from '../steps';
+
 export const constantsJs = `
 
         const API_BASE = '/api';
@@ -20,13 +22,13 @@ export const constantsJs = `
         }
 
         // Font size scaling
-        const FONT_SCALES = [0.75, 0.85, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5];
+        const FONT_SCALES = ${JSON.stringify(FONT_SCALES)};
         let currentFontScaleIndex = 3; // default 1.0
         let isChangingFontSize = false; // Flag to prevent scroll unpinning during zoom changes
         let activeTerminalId = null; // Session ID of terminal with scroll activated
 
         // Terminal height scaling
-        const TERMINAL_HEIGHTS = [150, 200, 250, 350, 450, 550, 700];
+        const TERMINAL_HEIGHTS = ${JSON.stringify(TERMINAL_HEIGHTS)};
         let currentHeightIndex = 3; // default 350px
 
         // Scrollback chunking - only render CHUNK_SIZE lines at a time for performance

@@ -11,6 +11,7 @@ import { createSession, getSession, updateSession, deleteSession } from './handl
 import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCodePage, generateInviteCode } from './handlers/pairing';
 import { requireAuth, requireDeviceAuth, requireMobileAuth, requireSessionAccess } from './auth/middleware';
 import { dashboardHtml, renderDashboardHtml } from './dashboard';
+import { FONT_SCALES, TERMINAL_HEIGHTS } from './dashboard/steps';
 import { renderLandingHtml } from './landing';
 import { privacyHtml } from './privacy';
 import { renderMcpToolsHtml, MCP_TOOLS_PATH } from './mcp/docs';
@@ -734,11 +735,13 @@ router.post('/api/settings', async (request, env) => {
     const existing = await env.TOKENS.get(`settings:${clientId}`, 'json') as DashboardSettings | null;
     const sectionUpdate = sanitizeVisibleSections(body.visibleSections);
     const settings: DashboardSettings = {
+        // Each index is held within the steps the page offers, so the
+        // largest text size is kept as well as the smallest.
         fontScaleIndex: typeof body.fontScaleIndex === 'number'
-            ? Math.max(0, Math.min(6, body.fontScaleIndex))
+            ? Math.max(0, Math.min(FONT_SCALES.length - 1, body.fontScaleIndex))
             : existing?.fontScaleIndex ?? 3,
         terminalHeightIndex: typeof body.terminalHeightIndex === 'number'
-            ? Math.max(0, Math.min(6, body.terminalHeightIndex))
+            ? Math.max(0, Math.min(TERMINAL_HEIGHTS.length - 1, body.terminalHeightIndex))
             : existing?.terminalHeightIndex ?? 3,
         terminalWrapEnabled: typeof body.terminalWrapEnabled === 'boolean'
             ? body.terminalWrapEnabled
