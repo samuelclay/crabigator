@@ -9766,10 +9766,10 @@ mod tests {
     }
 
     /// Slack links render only in recap view, so compact view spends their
-    /// room on the title. In both views the diff stays beside the activity
-    /// column, and a link lines up with the right edge like the status.
+    /// room on the title. The diff and GitHub status share the PR header,
+    /// and the Slack link lines up with its right edge.
     #[test]
-    fn title_takes_the_slack_link_room_and_the_diff_hugs_the_activity() {
+    fn compact_pr_title_and_recap_link_share_the_available_width() {
         let title = "Skip URL-less documents in the component builder so knowledge sync \
                      stops failing on null links";
         let mut pr = board_pr(9, "portal");
@@ -9797,24 +9797,20 @@ mod tests {
                 .find(|line| crate::parsers::strip_ansi_for_debug(line).contains(needle))
                 .unwrap_or_else(|| panic!("no line holds {needle:?}:\n{frame}"))
         }
-        // The activity column ends with the completion age; only the column
-        // gap and the diff's own leading space may separate them.
-        let gap_before_diff = |row: &str| {
-            let before_diff = &row[..row.find("+34 -6").unwrap()];
-            before_diff.len() - before_diff.trim_end().len()
-        };
-
         let compact_frame = render_frame_at(&entries, 0);
         let compact = crate::parsers::strip_ansi_for_debug(row_with(&compact_frame, "#9:"));
         assert!(
             compact.contains(title),
             "the title takes the room: {compact}"
         );
-        assert!(gap_before_diff(&compact) <= 2, "{compact}");
 
         let recap = render_frame_at(&entries, 1);
         let recap_row = crate::parsers::strip_ansi_for_debug(row_with(&recap, "#9:"));
-        assert!(gap_before_diff(&recap_row) <= 2, "{recap_row}");
+        for header in [&compact, &recap_row] {
+            let (_, status) = header.split_once("+34 -6").expect("the PR shows its diff");
+            assert!(status.trim_start().starts_with("open"), "{header}");
+            assert_eq!(header.width(), 160 - crate::ui::pr_cells::PR_RIGHT_PADDING);
+        }
 
         let link_row = row_with(&recap, "#deployments-and-releases");
         let link_text = crate::parsers::strip_ansi_for_debug(link_row);
