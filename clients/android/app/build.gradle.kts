@@ -16,8 +16,8 @@ android {
         applicationId = "com.crabigator.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         for (key in listOf("google_app_id", "google_api_key", "gcm_defaultSenderId", "project_id")) {
             resValue("string", key, firebase.getProperty(key, ""))
