@@ -104,13 +104,18 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
     // window. The board's rows have no stream, so the numbers are stored.
     desktop.send(JSON.stringify({ ...statsEvent, prompts: 8, prompts_changed_at: 1700, context_used: 52000, context_limit: 200000 }));
     await expect.poll(liveStats).toMatchObject({ context_used: 52000, context_limit: 200000 });
-    // A change inside the same minute waits; the next turn boundary writes it.
+    // A change inside the same ten minutes waits, and so does the start of a
+    // turn: every session of every account would otherwise write on each one.
     const turn = { ...statsEvent, prompts: 8, prompts_changed_at: 1700, completions: 7, completions_changed_at: 1800 };
     desktop.send(JSON.stringify({ ...statsEvent, prompts: 8, prompts_changed_at: 1700, context_used: 60000, context_limit: 200000 }));
     desktop.send(JSON.stringify(turn));
     await expect.poll(async () => (await read()).sessions.find((s: any) => s.session_id === 'stats-1').completions_changed_at).toBe(1800);
     expect(await liveStats()).toMatchObject({ context_used: 52000, context_limit: 200000 });
-    desktop.send(JSON.stringify({ ...turn, prompts: 9, prompts_changed_at: 1900, context_used: 64000, context_limit: 200000 }));
+    desktop.send(JSON.stringify({ ...turn, prompts: 9, prompts_changed_at: 1900, context_used: 62000, context_limit: 200000 }));
+    await expect.poll(async () => (await read()).sessions.find((s: any) => s.session_id === 'stats-1').prompts_changed_at).toBe(1900);
+    expect(await liveStats()).toMatchObject({ context_used: 52000, context_limit: 200000 });
+    // The end of a turn writes the numbers it reports.
+    desktop.send(JSON.stringify({ ...turn, prompts: 9, prompts_changed_at: 1900, completions: 8, completions_changed_at: 2000, context_used: 64000, context_limit: 200000 }));
     await expect.poll(liveStats).toMatchObject({ context_used: 64000, context_limit: 200000 });
 
     // A dead desktop retains its last state in D1 until cleanup. Both the

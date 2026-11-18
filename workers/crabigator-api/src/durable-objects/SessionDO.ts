@@ -265,7 +265,7 @@ export class SessionDO implements DurableObject {
     private lastD1SlackSnapshot: string = '';
     /** Last context window numbers written to the session row ("used/limit"). */
     private lastD1ContextSnapshot: string = '';
-    /** Last time those numbers were written (60s throttle between turns). */
+    /** Last time those numbers were written (ten-minute throttle within a turn). */
     private lastD1ContextUpdate: number = 0;
     /** Serializes stats persistence so external D1 I/O cannot reorder updates. */
     private statsUpdateQueue: Promise<void> = Promise.resolve();
@@ -627,16 +627,17 @@ export class SessionDO implements DurableObject {
     /**
      * Keep the session row's context window numbers current for the PR board,
      * whose rows have no live stats stream. The numbers move with every model
-     * call, so they are written when a turn starts or ends and otherwise at
-     * most once a minute. Desktops that never report context write nothing.
+     * call, and every session of every account would write them, so they are
+     * written when a turn ends and otherwise at most once every ten minutes.
+     * Desktops that never report context write nothing.
      */
-    private async persistContextToD1(stats: StatsEvent, turnBoundary: boolean): Promise<void> {
+    private async persistContextToD1(stats: StatsEvent, turnEnded: boolean): Promise<void> {
         const sessionId = this.persistentState.sessionId || this.sessionInfo?.id;
         const context = contextWindow(stats);
         if (!sessionId || !context) return;
         const snapshot = `${context.used}/${context.limit}`;
         if (snapshot === this.lastD1ContextSnapshot) return;
-        if (!turnBoundary && Date.now() - this.lastD1ContextUpdate < 60_000) return;
+        if (!turnEnded && Date.now() - this.lastD1ContextUpdate < 600_000) return;
         // Set before the write, so a failing write is retried at the same pace.
         this.lastD1ContextUpdate = Date.now();
         try {
@@ -1136,7 +1137,7 @@ export class SessionDO implements DurableObject {
                         }
                     }
 
-                    await this.persistContextToD1(stats, promptTimestampChanged || completionTimestampChanged);
+                    await this.persistContextToD1(stats, completionTimestampChanged);
 
                     this.ephemeralState.lastStats = recencyPersisted
                         ? stats
