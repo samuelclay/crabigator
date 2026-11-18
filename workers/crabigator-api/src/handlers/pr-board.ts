@@ -22,6 +22,8 @@ interface BoardSessionRow {
     thinking_seconds: number;
     tool_calls: number;
     compressions: number;
+    context_used: number | null;
+    context_limit: number | null;
     prompts: number;
     completions: number;
     prompts_changed_at: number | null;
@@ -292,6 +294,10 @@ interface BoardEntry {
             compressions: number;
             prompts: number;
             completions: number;
+            /** Tokens in the context window; null until the desktop reports it. */
+            context_used: number | null;
+            /** The context window's size for the session's model; null until reported. */
+            context_limit: number | null;
         };
         /** When the session last received a prompt, as Unix seconds. */
         prompts_changed_at: number;
@@ -423,6 +429,8 @@ function boardSession(row: BoardSessionRow, primary: boolean): BoardSession {
             compressions: row.compressions,
             prompts: row.prompts,
             completions: row.completions,
+            context_used: row.context_used ?? null,
+            context_limit: row.context_limit ?? null,
         },
         prompts_changed_at: row.prompts_changed_at || 0,
         completions_changed_at: row.completions_changed_at || 0,
@@ -611,6 +619,7 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
                 s.client_session_id,
                 s.platform, s.cwd, s.pr_scope, s.state AS session_state, s.is_active, s.last_seen_at,
                 s.started_at, s.ended_at, s.work_seconds, s.thinking_seconds, s.prompts, s.completions, s.tool_calls, s.compressions,
+                s.context_used, s.context_limit,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.titles_changed_at, s.recap,
                 s.repo_owner, s.repo_name, s.branch,
@@ -786,6 +795,7 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
         `SELECT s.id AS session_id, s.client_session_id, s.platform, s.cwd, s.pr_scope, s.state AS session_state,
                 s.is_active, s.last_seen_at,
                 s.started_at, s.ended_at, s.work_seconds, s.thinking_seconds, s.prompts, s.completions, s.tool_calls, s.compressions,
+                s.context_used, s.context_limit,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.titles_changed_at, s.recap,
                 s.repo_owner, s.repo_name, s.branch,

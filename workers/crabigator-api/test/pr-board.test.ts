@@ -14,6 +14,8 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
         testEnv.DB.prepare('ALTER TABLE sessions ADD COLUMN work_seconds INTEGER'),
         testEnv.DB.prepare('ALTER TABLE sessions ADD COLUMN compressions INTEGER NOT NULL DEFAULT 0'),
         testEnv.DB.prepare('ALTER TABLE sessions ADD COLUMN slack_threads TEXT'),
+        testEnv.DB.prepare('ALTER TABLE sessions ADD COLUMN context_used INTEGER'),
+        testEnv.DB.prepare('ALTER TABLE sessions ADD COLUMN context_limit INTEGER'),
         testEnv.DB.prepare('CREATE TABLE pr_overrides (group_key TEXT, owner TEXT, repo TEXT, number INTEGER, scope_key TEXT, disposition TEXT)'),
         testEnv.DB.prepare('CREATE TABLE watched_prs (group_key TEXT, owner TEXT, repo TEXT, number INTEGER, url TEXT, added_at INTEGER, data TEXT, refreshed_at INTEGER)'),
     ]);
@@ -26,10 +28,11 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
             VALUES (?, 'stats-device', ?, '/project', 'claude', ?, 1000, ?, 1600, ?, 123, 7, 6, 1400, 1500, 9, 2)`)
             .bind(`stats-${active}`, `local-${active}`, active, active ? null : 1600, active ? null : 590).run();
     }
+    // The ended session kept the context numbers its desktop last reported.
+    await testEnv.DB.prepare("UPDATE sessions SET context_used = 186000, context_limit = 1000000 WHERE id = 'stats-0'").run();
     const live = await testEnv.SESSION.get(testEnv.SESSION.idFromName('stats-1'))
         .fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } });
-    const desktop = live.webSocket!;
-    desktop.accept();
+    live.webSocket!.accept();
     const pr = { owner: 'o', repo: 'r', number: 1, url: 'https://github.com/o/r/pull/1', branch: 'feature', title: 'Work',
         state: 'OPEN', is_draft: false, additions: 1, deletions: 0, changed_files: 1, mergeable: 'MERGEABLE',
         merge_state_status: 'CLEAN', checks_passed: 0, checks_failed: 0, checks_pending: 0, checks_total: 0,
@@ -61,10 +64,11 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
     expect(body.prs[0].sessions[0].recap).toMatchObject({ headline: 'Shipped the fix', generated_at: 2000 });
     const shared = { started_at: 1000, last_seen_at: 1600, prompts_changed_at: 1400, completions_changed_at: 1500,
         stats: { thinking_seconds: 123, prompts: 7, completions: 6, tools: 9, compressions: 2 } };
+    // A desktop that has not reported its context window leaves both numbers null.
     expect(body.sessions[0]).toMatchObject({ ...shared, session_id: 'stats-1', active: true, ended_at: null,
-        stats: { ...shared.stats, work_seconds: null } });
+        stats: { ...shared.stats, work_seconds: null, context_used: null, context_limit: null } });
     expect(body.prs[0].sessions[0]).toMatchObject({ ...shared, session_id: 'stats-0', active: false, ended_at: 1600,
-        stats: { ...shared.stats, work_seconds: 590 } });
+        stats: { ...shared.stats, work_seconds: 590, context_used: 186000, context_limit: 1000000 } });
     // Aggregate primary status must not turn another session's secondary into a primary.
     const merged = { ...pr, state: 'MERGED', refreshed_at: 3000 };
     const secondary = { ...merged, primary: false, created_here: false, worktree_visit: true };
@@ -80,13 +84,38 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
     expect(result.prs[0].sessions[0]).toMatchObject({ session_id: 'stats-0', pr_primary: true });
     expect(result.prs[0].touching[0]).toMatchObject({ session_id: 'stats-1', pr_primary: false });
 
-    // A dead desktop retains its last state in D1 until cleanup. Both the
-    // standalone row and its PR sub-row must stop appearing live meanwhile.
-    desktop.close();
     const read = async () => (await getPrBoard(new Request(`https://example.com${path}`, { headers: {
         'X-Device-Id': 'stats-device', 'X-Timestamp': timestamp,
         'X-Signature': await hmacSign(secret, `GET:${path}:${timestamp}`),
     } }), testEnv)).json() as Promise<any>;
+    const liveStats = async () => (await read()).sessions.find((s: any) => s.session_id === 'stats-1').stats;
+    // Reconnect as a registered session, so the session knows which row is its own.
+    const desktop = (await testEnv.SESSION.get(testEnv.SESSION.idFromName('stats-1'))
+        .fetch('https://internal/connect?sessionId=stats-1', { headers: { Upgrade: 'websocket' } })).webSocket!;
+    desktop.accept();
+    const statsEvent = { type: 'stats', prompts: 7, completions: 6, tools: 9, compressions: 2,
+        thinking_seconds: 123, work_seconds: 400, tool_timestamps: [], session_start: 1000 };
+    // An old desktop's stats event carries no context, so nothing is stored.
+    desktop.send(JSON.stringify(statsEvent));
+    desktop.send(JSON.stringify({ ...statsEvent, prompts: 8, prompts_changed_at: 1700 }));
+    await expect.poll(async () => (await read()).sessions.find((s: any) => s.session_id === 'stats-1').prompts_changed_at).toBe(1700);
+    expect(await liveStats()).toMatchObject({ context_used: null, context_limit: null });
+    // The live stats stream is the only place a desktop reports its context
+    // window. The board's rows have no stream, so the numbers are stored.
+    desktop.send(JSON.stringify({ ...statsEvent, prompts: 8, prompts_changed_at: 1700, context_used: 52000, context_limit: 200000 }));
+    await expect.poll(liveStats).toMatchObject({ context_used: 52000, context_limit: 200000 });
+    // A change inside the same minute waits; the next turn boundary writes it.
+    const turn = { ...statsEvent, prompts: 8, prompts_changed_at: 1700, completions: 7, completions_changed_at: 1800 };
+    desktop.send(JSON.stringify({ ...statsEvent, prompts: 8, prompts_changed_at: 1700, context_used: 60000, context_limit: 200000 }));
+    desktop.send(JSON.stringify(turn));
+    await expect.poll(async () => (await read()).sessions.find((s: any) => s.session_id === 'stats-1').completions_changed_at).toBe(1800);
+    expect(await liveStats()).toMatchObject({ context_used: 52000, context_limit: 200000 });
+    desktop.send(JSON.stringify({ ...turn, prompts: 9, prompts_changed_at: 1900, context_used: 64000, context_limit: 200000 }));
+    await expect.poll(liveStats).toMatchObject({ context_used: 64000, context_limit: 200000 });
+
+    // A dead desktop retains its last state in D1 until cleanup. Both the
+    // standalone row and its PR sub-row must stop appearing live meanwhile.
+    desktop.close();
     // Existing sessions from before disconnect timestamps were stored.
     const orphan = testEnv.SESSION.get(testEnv.SESSION.idFromName('stats-orphan'));
     await testEnv.DB.prepare(`INSERT INTO sessions

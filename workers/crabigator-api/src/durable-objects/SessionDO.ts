@@ -145,6 +145,13 @@ function recapBrief(event: any): string | null {
  * two letters hit nearly every line, so a query needs three characters; the
  * expanded preview shows the last few matches with a little context each.
  */
+/** The context window a stats event reports, or null when it reports none. */
+function contextWindow(stats: StatsEvent): { used: number; limit: number } | null {
+    const { context_used: used, context_limit: limit } = stats;
+    if (!Number.isSafeInteger(used) || !Number.isSafeInteger(limit)) return null;
+    return used! >= 0 && limit! > 0 ? { used: used!, limit: limit! } : null;
+}
+
 const SCROLLBACK_QUERY_MIN = 3;
 const SCROLLBACK_PREVIEW_MATCHES = 3;
 const SCROLLBACK_PREVIEW_CONTEXT = 2;
@@ -256,6 +263,10 @@ export class SessionDO implements DurableObject {
     private lastD1RepositorySnapshot: string = '';
     /** Last Slack thread list written to the session row. */
     private lastD1SlackSnapshot: string = '';
+    /** Last context window numbers written to the session row ("used/limit"). */
+    private lastD1ContextSnapshot: string = '';
+    /** Last time those numbers were written (60s throttle between turns). */
+    private lastD1ContextUpdate: number = 0;
     /** Serializes stats persistence so external D1 I/O cannot reorder updates. */
     private statsUpdateQueue: Promise<void> = Promise.resolve();
 
@@ -611,6 +622,31 @@ export class SessionDO implements DurableObject {
         this.env.DB.prepare(query).bind(now, this.sessionInfo.id).run().catch((error) => {
             console.error('Error updating last_seen_at:', error);
         });
+    }
+
+    /**
+     * Keep the session row's context window numbers current for the PR board,
+     * whose rows have no live stats stream. The numbers move with every model
+     * call, so they are written when a turn starts or ends and otherwise at
+     * most once a minute. Desktops that never report context write nothing.
+     */
+    private async persistContextToD1(stats: StatsEvent, turnBoundary: boolean): Promise<void> {
+        const sessionId = this.persistentState.sessionId || this.sessionInfo?.id;
+        const context = contextWindow(stats);
+        if (!sessionId || !context) return;
+        const snapshot = `${context.used}/${context.limit}`;
+        if (snapshot === this.lastD1ContextSnapshot) return;
+        if (!turnBoundary && Date.now() - this.lastD1ContextUpdate < 60_000) return;
+        // Set before the write, so a failing write is retried at the same pace.
+        this.lastD1ContextUpdate = Date.now();
+        try {
+            await this.env.DB.prepare(
+                'UPDATE sessions SET context_used = ?, context_limit = ? WHERE id = ?'
+            ).bind(context.used, context.limit, sessionId).run();
+            this.lastD1ContextSnapshot = snapshot;
+        } catch (error) {
+            console.error('Failed to persist session context', { sessionId, error });
+        }
     }
 
     /**
@@ -1099,6 +1135,8 @@ export class SessionDO implements DurableObject {
                             });
                         }
                     }
+
+                    await this.persistContextToD1(stats, promptTimestampChanged || completionTimestampChanged);
 
                     this.ephemeralState.lastStats = recencyPersisted
                         ? stats
