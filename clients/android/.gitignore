@@ -4,3 +4,5 @@
 local.properties
 firebase.properties
 *.jks
+# The repository ignores Rust's debug/ output folders. This one is the debug-only source set.
+!app/src/debug/

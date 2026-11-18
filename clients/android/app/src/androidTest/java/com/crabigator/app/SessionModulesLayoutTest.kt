@@ -66,7 +66,7 @@ class SessionModulesLayoutTest {
             it.enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         }
         compose.setContent { MaterialTheme(colorScheme = darkColorScheme(background = Ink, surface = Ink)) { Surface(Modifier.fillMaxSize()) {
-            Box(Modifier.safeDrawingPadding()) { SessionDetail(state, model, false, {}, active = false, style = {}) }
+            Box(Modifier.safeDrawingPadding()) { SessionDetail(state, model, false, {}, active = false, view = {}) }
         } } }
         compose.onNodeWithText("Translated the app into 21 languages.").assertDoesNotExist()
         compose.onNodeWithText("7m ago", useUnmergedTree = true).assertExists()

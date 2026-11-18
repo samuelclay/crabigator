@@ -122,10 +122,13 @@ fun JSONArray.objects(): List<JSONObject> = (0 until length()).mapNotNull { optJ
 fun JSONObject.array(key: String): List<JSONObject> = optJSONArray(key)?.objects().orEmpty()
 fun JSONObject.text(key: String, fallback: String = ""): String = if (isNull(key)) fallback else optString(key, fallback)
 
-data class Session(val id: String, val title: String, val repo: String, val machine: String, val state: String, val active: Boolean, val glyph: String, val color: String, val recap: String, val platform: String, val branch: String, val background: String, val stats: SessionStats = SessionStats(), val cwd: String = "", val recapAt: Long = 0) {
+data class Session(val id: String, val title: String, val repo: String, val machine: String, val state: String, val active: Boolean, val glyph: String, val color: String, val recap: String, val platform: String, val branch: String, val background: String, val stats: SessionStats = SessionStats(), val cwd: String = "", val recapAt: Long = 0,
+    /** Files not committed in the session's working tree, and the lines added and removed across them. */
+    val uncommitted: Int = 0, val additions: Int = 0, val deletions: Int = 0) {
     val attention get() = state == "question" || state == "permission"
     companion object {
-        fun parse(j: JSONObject) = Session(j.text("session_id", j.text("id")), j.text("title").ifBlank { j.text("dir_name", "Session") }, listOf(j.text("repo_owner"), j.text("repo_name")).filter { it.isNotBlank() }.joinToString("/"), j.text("device_name"), j.text("state", "ready"), j.optBoolean("active", true), j.optJSONObject("session_mark")?.text("glyph", "◈") ?: "◈", j.optJSONObject("session_mark")?.text("fg_hex", "#FFAA77") ?: "#FFAA77", recapHeadline(j.optJSONObject("recap")?.text("headline").orEmpty()), j.text("platform"), j.text("branch"), j.optJSONObject("session_mark")?.text("bg_hex", "#352B25") ?: "#352B25", SessionStats.parse(j), j.text("cwd"), (j.optJSONObject("recap")?.optLong("generated_at") ?: 0) / 1000)
+        fun parse(j: JSONObject) = Session(j.text("session_id", j.text("id")), j.text("title").ifBlank { j.text("dir_name", "Session") }, listOf(j.text("repo_owner"), j.text("repo_name")).filter { it.isNotBlank() }.joinToString("/"), j.text("device_name"), j.text("state", "ready"), j.optBoolean("active", true), j.optJSONObject("session_mark")?.text("glyph", "◈") ?: "◈", j.optJSONObject("session_mark")?.text("fg_hex", "#FFAA77") ?: "#FFAA77", recapHeadline(j.optJSONObject("recap")?.text("headline").orEmpty()), j.text("platform"), j.text("branch"), j.optJSONObject("session_mark")?.text("bg_hex", "#352B25") ?: "#352B25", SessionStats.parse(j), j.text("cwd"), (j.optJSONObject("recap")?.optLong("generated_at") ?: 0) / 1000,
+            j.optInt("uncommitted").coerceAtLeast(0), j.optInt("additions").coerceAtLeast(0), j.optInt("deletions").coerceAtLeast(0))
     }
 }
 data class PullRequest(val key: String, val title: String, val repo: String, val number: Int, val state: String, val checks: String, val url: String, val sessions: List<Session>, val watched: Boolean = false,

@@ -26,10 +26,18 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,13 +50,17 @@ import org.json.JSONObject
 
 private val Cyan = CrabColors.Cyan
 
+/** Which screen a View panel changes, or null for every other page. */
+private fun viewScope(page: String) = page.removePrefix("View ").takeIf { page.startsWith("View ") }
+
 @Composable internal fun MenuPanel(menu: String?, anchor: Rect, model: SessionModel, notifications: () -> Unit, navigate: (String) -> Unit, close: () -> Unit) {
     val prefs by model.preferences.collectAsStateWithLifecycle()
-    var lastMenu by remember { mutableStateOf("Settings") }
+    var lastMenu by remember { mutableStateOf("Account") }
     if (menu != null) lastMenu = menu
-    val title = when (lastMenu) { "Board style" -> "Style"; "Create session" -> "New session"; "Session voice transcripts" -> "Voice transcripts"; else -> lastMenu }
+    val scope = viewScope(lastMenu)
+    val title = when (lastMenu) { "Create session" -> "New session"; "Watch PR" -> "Watch a pull request"; "Session voice transcripts" -> "Voice transcripts"; else -> lastMenu }
     // Pages opened from another menu page, and the page Back returns to.
-    val parents = mapOf("Notifications" to "Settings", "New session" to "Settings", "Watch PR" to "Settings", "Voice transcripts" to "Settings", "Session voice transcripts" to "Style")
+    val parents = mapOf("Notifications" to "Account", "Voice transcripts" to "Account", "Session voice transcripts" to "View Session")
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(menu) { if (menu != null) { focus.clearFocus(); keyboard?.hide() } }
@@ -60,49 +72,62 @@ private val Cyan = CrabColors.Cyan
         val viewport = listOf(maxWidth.value, maxHeight.value, density.density, density.fontScale)
         var previousViewport by remember { mutableStateOf(viewport) }
         LaunchedEffect(viewport) { if (previousViewport != viewport) { previousViewport = viewport; close() } }
-        val safeLeft = with(density) { WindowInsets.safeDrawing.getLeft(this, direction).toDp() } + 12.dp
-        val safeRight = with(density) { WindowInsets.safeDrawing.getRight(this, direction).toDp() } + 12.dp
+        val insetLeft = with(density) { WindowInsets.safeDrawing.getLeft(this, direction).toDp() }
+        val insetRight = with(density) { WindowInsets.safeDrawing.getRight(this, direction).toDp() }
+        val insetBottom = with(density) { WindowInsets.safeDrawing.getBottom(this).toDp() }
+        val safeLeft = insetLeft + 12.dp
+        val safeRight = insetRight + 12.dp
         val safeTop = with(density) { WindowInsets.safeDrawing.getTop(this).toDp() } + 8.dp
-        val safeBottom = with(density) { WindowInsets.safeDrawing.getBottom(this).toDp() } + 12.dp
-        val menuWidth = 360.dp.coerceAtMost((maxWidth - safeLeft - safeRight).coerceAtLeast(1.dp))
-        val left = (with(density) { anchor.right.toDp() } - menuWidth).coerceIn(safeLeft, (maxWidth - menuWidth - safeRight).coerceAtLeast(safeLeft))
+        val safeBottom = insetBottom + 12.dp
+        // On a phone the View and Account panels are sheets: full width, from under their button to the foot of the screen.
+        val sheet = phone && lastMenu !in listOf("Create session", "Watch PR")
+        // A View panel holds drawn tiles side by side, so its popover is wider.
+        val viewFamily = scope != null || parents[lastMenu]?.let(::viewScope) != null
+        val menuWidth = if (sheet) maxWidth else (if (viewFamily) 440.dp else 360.dp).coerceAtMost((maxWidth - safeLeft - safeRight).coerceAtLeast(1.dp))
+        val left = if (sheet) 0.dp else (with(density) { anchor.right.toDp() } - menuWidth).coerceIn(safeLeft, (maxWidth - menuWidth - safeRight).coerceAtLeast(safeLeft))
         val latestTop = (maxHeight - safeBottom - 120.dp).coerceAtLeast(safeTop)
-        val top = (with(density) { anchor.bottom.toDp() } + 8.dp).coerceIn(safeTop, latestTop)
+        // The Account pages take the whole phone screen. A View panel starts under its button, so the screen it changes stays in sight.
+        val top = if (sheet && !viewFamily) safeTop else (with(density) { anchor.bottom.toDp() } + 8.dp).coerceIn(safeTop, latestTop)
         val availableHeight = (maxHeight - top - safeBottom).coerceAtLeast(1.dp)
         val menuHeight = if (phone) availableHeight * .75f else availableHeight
+        val surface by animateColorAsState(if (scope != null) Panel else Ink, tween(160), label = "Menu surface")
         AnimatedVisibility(menu != null, enter = fadeIn(tween(160)), exit = fadeOut(tween(140))) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .12f)).clickable(onClickLabel = "Close menu", onClick = close))
         }
         AnimatedVisibility(menu != null, modifier = Modifier.offset(x = left, y = top),
-            enter = fadeIn(tween(160)) + scaleIn(tween(200), initialScale = .96f, transformOrigin = TransformOrigin(1f, 0f)),
-            exit = fadeOut(tween(140)) + scaleOut(tween(160), targetScale = .96f, transformOrigin = TransformOrigin(1f, 0f))) {
-            Surface(Modifier.width(menuWidth).heightIn(max = menuHeight)
-                .semantics { paneTitle = title }.pointerInput(Unit) { detectTapGestures {} }, color = Ink,
-                shape = RoundedCornerShape(16.dp), shadowElevation = 20.dp, border = BorderStroke(1.dp, Color(0xFF37414E))) {
-                Column {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        parents[lastMenu]?.let { parent -> Control(R.drawable.ic_back, "Back to ${parent.lowercase()}") { navigate(parent) } }
-                        Text(title, Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                        Control(R.drawable.ic_close, "Close menu", onClick = close)
+            enter = if (sheet) fadeIn(tween(160)) + slideInVertically(tween(240)) { it / 10 } else fadeIn(tween(160)) + scaleIn(tween(200), initialScale = .96f, transformOrigin = TransformOrigin(1f, 0f)),
+            exit = if (sheet) fadeOut(tween(140)) + slideOutVertically(tween(160)) { it / 10 } else fadeOut(tween(140)) + scaleOut(tween(160), targetScale = .96f, transformOrigin = TransformOrigin(1f, 0f))) {
+            Surface(Modifier.width(menuWidth).then(if (sheet) Modifier.height(maxHeight - top) else Modifier.heightIn(max = menuHeight))
+                .semantics { paneTitle = title }.pointerInput(Unit) { detectTapGestures {} }, color = surface,
+                shape = if (sheet) RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp) else RoundedCornerShape(16.dp), shadowElevation = 20.dp, border = BorderStroke(1.dp, Color(0xFF37414E))) {
+                Column(if (sheet) Modifier.padding(start = insetLeft, end = insetRight) else Modifier) {
+                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        parents[lastMenu]?.let { parent -> Control(R.drawable.ic_back, "Back to ${if (viewScope(parent) != null) "View" else parent.lowercase()}") { navigate(parent) } }
+                        // A View panel names the screen it changes, in the brand's gold.
+                        Text(buildAnnotatedString {
+                            append(if (scope != null) "View" else title)
+                            if (scope != null) withStyle(SpanStyle(color = CrabColors.Orange, fontWeight = FontWeight.Medium)) { append(" $scope") }
+                        }, Modifier.weight(1f).semantics { heading() }, fontSize = if (lastMenu == "Account") 20.sp else 17.sp, fontWeight = FontWeight.Bold)
+                        TextButton(close, Modifier.heightIn(min = 44.dp)) { Text("Done", color = Cyan, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
                     }
-                    HorizontalDivider(color = Color(0xFF303A46))
+                    if (scope == null && lastMenu != "Account") HorizontalDivider(color = Hairline)
                     AnimatedContent(lastMenu, label = "Menu page", modifier = Modifier.weight(1f, fill = false)) { page ->
-                        if (page == "Style" || page == "Board style") {
-                            Column {
-                                // The session's own menu also reaches that session's voice transcripts.
-                                if (page == "Style") TextButton({ navigate("Session voice transcripts") }, Modifier.fillMaxWidth().padding(horizontal = 8.dp)) { Text("Voice transcripts", color = Cyan) }
-                                StyleMenu(prefs, terminalInitially = page == "Style", update = model::style)
-                            }
-                        } else {
-                            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                when (page) {
-                                    "Notifications" -> NotificationMenu(notifications)
-                                    "New session", "Create session" -> BoardActionMenu(model, watch = false)
-                                    "Watch PR" -> BoardActionMenu(model, watch = true)
-                                    "Voice transcripts" -> VoiceTranscriptsMenu(model, null)
-                                    "Session voice transcripts" -> VoiceTranscriptsMenu(model, model.state.value.selected?.id)
-                                    else -> SettingsMenu(model, prefs, navigate)
+                        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = if (viewScope(page) != null || page == "Account") 6.dp else 16.dp, bottom = if (sheet) insetBottom + 24.dp else 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            when (page) {
+                                "View List" -> BoardViewPanel(model, prefs, list = true)
+                                "View PR board" -> BoardViewPanel(model, prefs, list = false)
+                                "View Session" -> SessionViewPanel(prefs, model::style) { navigate("Session voice transcripts") }
+                                "Notifications" -> NotificationMenu(notifications)
+                                "Create session" -> BoardActionMenu(model, watch = false)
+                                "Watch PR" -> BoardActionMenu(model, watch = true)
+                                "Voice transcripts" -> VoiceTranscriptsMenu(model, null)
+                                "Session voice transcripts" -> {
+                                    // Follow the open session without redrawing this page for each terminal update.
+                                    val state = model.state.collectAsStateWithLifecycle()
+                                    val sessionId by remember { derivedStateOf { state.value.selected?.id } }
+                                    VoiceTranscriptsMenu(model, sessionId)
                                 }
+                                else -> AccountMenu(model, navigate)
                             }
                         }
                     }
@@ -130,83 +155,17 @@ private val Cyan = CrabColors.Cyan
         }
     }
 }
-@Composable private fun SettingPicker(label: String, value: String, options: List<String>, choose: (Int) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        TextButton({ expanded = true }, Modifier.fillMaxWidth()) {
-            Text(label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-            Text(value, color = Cyan, fontSize = 13.sp)
-        }
-        DropdownMenu(expanded, { expanded = false }) {
-            options.forEachIndexed { index, option ->
-                DropdownMenuItem(text = { Text(option) }, onClick = { choose(index); expanded = false })
-            }
-        }
-    }
-}
 @Composable private fun CheckRow(label: String, checked: Boolean, change: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = change), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), fontSize = 14.sp)
         Checkbox(checked, { change() }, colors = CheckboxDefaults.colors(checkedColor = Cyan))
     }
 }
-@Composable private fun Stepper(label: String, decrease: () -> Unit, increase: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        OutlinedButton(decrease) { Text("−") }
-        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { Text(label, color = Cyan) }
-        OutlinedButton(increase) { Text("+") }
-    }
-}
-@Composable internal fun StyleMenu(p: UiPreferences, terminalInitially: Boolean, update: ((UiPreferences) -> UiPreferences) -> Unit) {
-    var terminal by remember(terminalInitially) { mutableStateOf(terminalInitially) }
-    Column {
-        Box(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-            Choices(listOf("List / PR board", "Terminal"), if (terminal) 1 else 0) { terminal = it == 1 }
-        }
-        key(terminal) {
-            Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                if (terminal) {
-                    MenuSection("Text") {
-                        Text("Text size", color = Muted, fontSize = 12.sp)
-                        Stepper("${p.fontSize} sp", { update { it.copy(fontSize = (it.fontSize - 1).coerceAtLeast(9)) } }, { update { it.copy(fontSize = (it.fontSize + 1).coerceAtMost(24)) } })
-                        Text("Line spacing", color = Muted, fontSize = 12.sp)
-                        Choices(listOf("Tight", "Normal", "Relaxed"), listOf(120,145,170).indexOf(p.lineSpacing)) { n -> update { it.copy(lineSpacing = listOf(120,145,170)[n]) } }
-                        Text("Text wrap", color = Muted, fontSize = 12.sp)
-                        Choices(listOf("Wrap", "Horizontal scroll"), if (p.wrap) 0 else 1) { n -> update { it.copy(wrap = n == 0) } }
-                    }
-                    MenuSection("Layout") {
-                        Text("Terminal height", color = Muted, fontSize = 12.sp)
-                        Choices(listOf("Full", "250", "350", "500", "700"), listOf(0,250,350,500,700).indexOf(p.terminalHeight)) { n -> update { it.copy(terminalHeight = listOf(0,250,350,500,700)[n]) } }
-                    }
-                    MenuSection("Widgets below the terminal") {
-                        Choices(listOf("Expanded", "Collapsed"), if (p.widgets) 0 else 1) { n -> update { it.copy(widgets = n == 0) } }
-                        listOf("recap" to "Recap", "prs" to "Pull requests", "commits" to "Commits", "git" to "Git status", "changes" to "Changes", "flow" to "Flow scene").forEach { (key, label) -> CheckRow(label, p.visible(key)) { update { it.toggle(key) } } }
-                    }
-                } else {
-                    MenuSection("Text and spacing") {
-                        Text("Text size", color = Muted, fontSize = 12.sp)
-                        Stepper("${p.boardFontSize} sp", { update { it.copy(boardFontSize = (it.boardFontSize - 1).coerceAtLeast(10)) } }, { update { it.copy(boardFontSize = (it.boardFontSize + 1).coerceAtMost(24)) } })
-                        Text("Row spacing", color = Muted, fontSize = 12.sp)
-                        Choices(listOf("Tight", "Normal", "Relaxed"), listOf("compact", "comfortable", "relaxed").indexOf(p.density).coerceAtLeast(0)) { n -> update { it.copy(density = listOf("compact", "comfortable", "relaxed")[n]) } }
-                        Text("Tight keeps titles on one line.", color = Muted, fontSize = 12.sp)
-                    }
-                    MenuSection("Layout") {
-                        Text("List columns", color = Muted, fontSize = 12.sp)
-                        Choices(listOf("1", "2", "3", "4", "Fit"), if (p.columns == 0) 4 else p.columns - 1) { n -> update { it.copy(columns = if (n == 4) 0 else n + 1) } }
-                        Text("Projects", color = Muted, fontSize = 12.sp)
-                        Choices(listOf("Together", "Grouped"), if (p.grouping == "all") 0 else 1) { n -> update { it.copy(grouping = if (n == 0) "all" else "project") } }
-                        if (p.grouping == "project") {
-                            Text("Project order", color = Muted, fontSize = 12.sp)
-                            Choices(listOf("Most recent", "Alphabetical"), if (p.order == "recent") 0 else 1) { n -> update { it.copy(order = if (n == 0) "recent" else "alpha") } }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+/** Where the Account page reads the account from. Tests and the debug preview supply their own; otherwise it asks the server. */
+internal val LocalAccountSource = compositionLocalOf<(suspend () -> JSONObject)?> { null }
 
-@Composable private fun SettingsMenu(model: SessionModel, p: UiPreferences, navigate: (String) -> Unit) {
+/** The account, its devices and its alerts. Nothing here changes how a screen looks. */
+@Composable private fun AccountMenu(model: SessionModel, navigate: (String) -> Unit) {
     val context = LocalContext.current
     val uri = LocalUriHandler.current
     val scope = rememberCoroutineScope()
@@ -215,60 +174,70 @@ private val Cyan = CrabColors.Cyan
     var invite by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var confirmUnpair by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { try { account = model.api.call("/api/account") } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; message = e.message.orEmpty() } }
-    val state by model.state.collectAsStateWithLifecycle()
-    MenuSection("List / PR board") {
-        val hours = listOf(1, 3, 6, 9, 12, 24, 0)
-        val ages = hours.map { if (it == 0) "All ages" else if (it == 1) "Last hour" else "Last $it hours" }
-        SettingPicker("Activity", ages[hours.indexOf(p.boardAgeHours).coerceAtLeast(0)], ages) { n -> model.style { it.copy(boardAgeHours = hours[n]) } }
-        SettingPicker("Sessions", if (p.showEnded) "Live and ended" else "Live", listOf("Live", "Live and ended")) { n -> model.style { it.copy(showEnded = n == 1) } }
-        val computers = (state.sessions.map { it.machineGroup } + p.boardComputer).filter { it.isNotBlank() }.distinct().sorted()
-        SettingPicker("Computers", p.boardComputer.ifBlank { "All computers" }, listOf("All computers") + computers) { n -> model.style { it.copy(boardComputer = if (n == 0) "" else computers[n - 1]) } }
-        CheckRow("Group by computer", p.groupByComputer) { model.style { it.copy(groupByComputer = !it.groupByComputer) } }
-        CheckRow("Show recaps", p.boardRecaps) { model.style { it.copy(boardRecaps = !it.boardRecaps) } }
-        SettingPicker("PR board groups", if (p.boardGrouping == "prs") "Pull requests" else "Sessions", listOf("Sessions", "Pull requests")) { n -> model.style { it.copy(boardGrouping = if (n == 1) "prs" else "sessions") } }
+    val source = LocalAccountSource.current
+    LaunchedEffect(Unit) { try { account = source?.invoke() ?: model.api.call("/api/account") } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; message = e.message.orEmpty() } }
+    AccountGroup("Alerts and history") {
+        val status = remember { Notifications.status(context) }
+        val on = status == "Notifications on"
+        AccountRow("Notifications", value = if (on) (if (Notifications.soundEnabled(context)) "On, with sound" else "On, silent") else if (status == "Notifications off") "Off" else status, valueColor = if (on) Mint else MutedText, chevron = true) { navigate("Notifications") }
+        AccountDivider()
+        AccountRow("Voice transcripts", chevron = true) { navigate("Voice transcripts") }
     }
-    val navigation by model.navigation.collectAsStateWithLifecycle()
-    MenuSection("Actions") {
-        TextButton({ navigate("Search") }) { Text("Search sessions", color = Cyan) }
-        TextButton({ navigate("New session") }) { Text("New session", color = Cyan) }
-        TextButton({ navigate("Watch PR") }) { Text("Watch PR", color = Cyan) }
-        if (LocalConfiguration.current.smallestScreenWidthDp >= 600 && state.selected != null) {
-            TextButton({ navigate("Toggle fullscreen") }) { Text(if (navigation.expanded) "Return to session" else "Expand List / PR board", color = Cyan) }
+    AccountGroup("Sign-in") {
+        val identities = account?.array("identities").orEmpty()
+        if (account == null && message.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 24.dp))
+        else if (identities.isEmpty()) AccountText("Pairing code")
+        identities.forEach { identity ->
+            val who = identity.text("email", identity.text("name", identity.text("username")))
+            val provider = when (identity.text("provider")) { "github" -> "GitHub"; "google" -> "Google"; else -> identity.text("provider").replaceFirstChar { it.uppercase() } }
+            AccountText(if (who.isBlank()) provider else if (provider.isBlank()) who else "$who with $provider")
+        }
+        AccountDivider()
+        AccountRow("Manage sign-in on the web", color = Cyan) { uri.openUri(model.credentials.origin + "/dashboard") }
+    }
+    AccountGroup("Devices and agents") {
+        AccountRow(if (busy) "Generating…" else "Pair another device", color = Cyan, enabled = !busy) { busy = true; scope.launch { try { invite = model.api.call("/api/pairing/invite", JSONObject()).text("code") } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; message = e.message.orEmpty() } finally { busy = false } } }
+        if (invite.isNotEmpty()) SelectionContainer { Text(invite, fontSize = 24.sp, color = Cyan, modifier = Modifier.padding(bottom = 12.dp)) }
+        AccountDivider()
+        Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Connect an agent with MCP", color = PrimaryText, fontSize = 15.sp)
+            SelectionContainer { Text(model.credentials.origin + "/mcp", color = SecondaryText, fontSize = 13.sp, fontFamily = FontFamily.Monospace) }
+            AccountRow("Tools and examples", color = Cyan, height = 44, fontSize = 14) { uri.openUri(model.credentials.origin + "/mcp-tools") }
         }
     }
-    MenuSection("Appearance") { TextButton({ navigate("Board style") }, Modifier.fillMaxWidth()) { Text("Style", color = Cyan) } }
-    MenuSection("Notifications") { TextButton({ navigate("Notifications") }, Modifier.fillMaxWidth()) { Text(Notifications.status(context), color = Cyan) } }
-    MenuSection("Voice") { TextButton({ navigate("Voice transcripts") }, Modifier.fillMaxWidth()) { Text("Voice transcripts", color = Cyan) } }
-    MenuSection("Session list") {
-        Text("Position", color = Muted, fontSize = 12.sp)
-        Choices(listOf("Left", "Right"), if (p.sidebarRight) 1 else 0) { n -> model.style { it.copy(sidebarRight = n == 1) } }
-    }
-    MenuSection("Visible stats") { listOf("sessionTime" to "Session time", "thinkingTime" to "Thinking time", "promptRecency" to "Last prompt", "completionRecency" to "Last completion", "tools" to "Tools", "compactions" to "Compactions", "context" to "Context").forEach { (key,label) -> CheckRow(label, p.visible(key)) { model.style { it.toggle(key) } } } }
-    MenuSection("Sign-in") {
-        val identities = account?.array("identities").orEmpty()
-        if (account == null && message.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
-        else if (identities.isEmpty()) Text("Pairing code", fontSize = 14.sp)
-        identities.forEach { Text(it.text("email", it.text("name", it.text("provider"))), fontSize = 14.sp) }
-        TextButton({ uri.openUri(model.credentials.origin + "/dashboard") }) { Text("Manage sign-in", color = Cyan) }
-    }
-    MenuSection("Pair another device") {
-        if (invite.isNotEmpty()) androidx.compose.foundation.text.selection.SelectionContainer { Text(invite, fontSize = 24.sp, color = Cyan) }
-        TextButton(onClick = { busy = true; scope.launch { try { invite = model.api.call("/api/pairing/invite", JSONObject()).text("code") } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; message = e.message.orEmpty() } finally { busy = false } } }, enabled = !busy) { Text(if (busy) "Generating…" else "Generate pairing code", color = Cyan) }
-    }
-    MenuSection("MCP") {
-        androidx.compose.foundation.text.selection.SelectionContainer { Text(model.credentials.origin + "/mcp", fontSize = 13.sp) }
-        TextButton({ uri.openUri(model.credentials.origin + "/mcp-tools") }) { Text("Tools and examples", color = Cyan) }
-    }
-    MenuSection("This device") {
-        TextButton({ uri.openUri("https://drinkcrabigator.com/privacy") }) { Text("Privacy policy", color = Cyan) }
-        Text(android.os.Build.MODEL, fontSize = 14.sp); Text(model.credentials.origin, fontSize = 12.sp, color = Muted)
-        Text("Version ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = Muted)
-        if (confirmUnpair) { Text("Unpair this device?", fontSize = 14.sp); Row { TextButton({ model.unpair() }) { Text("Unpair", color = MaterialTheme.colorScheme.error) }; TextButton({ confirmUnpair = false }) { Text("Cancel") } } }
-        else TextButton({ confirmUnpair = true }) { Text("Unpair this device", color = MaterialTheme.colorScheme.error) }
+    AccountGroup("This device") {
+        Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(android.os.Build.MODEL, color = PrimaryText, fontSize = 15.sp)
+            Text("${model.credentials.origin.removePrefix("https://")} · Version ${BuildConfig.VERSION_NAME}", color = MutedText, fontSize = 13.sp)
+        }
+        AccountDivider()
+        AccountRow("Privacy policy", color = Cyan) { uri.openUri("https://drinkcrabigator.com/privacy") }
+        AccountDivider()
+        if (confirmUnpair) Row(Modifier.heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Unpair this device?", Modifier.weight(1f), color = PrimaryText, fontSize = 15.sp)
+            TextButton({ model.unpair() }) { Text("Unpair", color = CrabColors.Red) }
+            TextButton({ confirmUnpair = false }) { Text("Cancel") }
+        } else AccountRow("Unpair this device", color = CrabColors.Red) { confirmUnpair = true }
     }
     if (message.isNotEmpty()) Text(message, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
 }
+@Composable private fun AccountGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, color = MutedText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+        Surface(color = Panel, shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Hairline)) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp), content = content)
+        }
+    }
+}
+@Composable private fun AccountRow(label: String, value: String = "", color: Color = PrimaryText, valueColor: Color = MutedText, chevron: Boolean = false, enabled: Boolean = true, height: Int = 52, fontSize: Int = 15, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = height.dp).clickable(enabled, role = Role.Button, onClick = onClick), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f), color = color, fontSize = fontSize.sp)
+        if (value.isNotBlank()) Text(value, color = valueColor, fontSize = 14.sp, maxLines = 1)
+        if (chevron) Icon(painterResource(R.drawable.ic_chevron_down), null, tint = MutedText, modifier = Modifier.size(16.dp).rotate(-90f))
+    }
+}
+@Composable private fun AccountText(text: String) { Box(Modifier.heightIn(min = 52.dp), contentAlignment = Alignment.CenterStart) { Text(text, color = PrimaryText, fontSize = 15.sp) } }
+@Composable private fun AccountDivider() { Box(Modifier.fillMaxWidth().height(1.dp).background(Hairline)) }
 @Composable internal fun NewSessionForm(model: SessionModel, request: suspend (String, JSONObject) -> Unit = { path, body -> model.api.call(path, body); model.refresh() }) {
     val state by model.state.collectAsStateWithLifecycle()
     val launch by model.sessionLaunch.collectAsStateWithLifecycle()

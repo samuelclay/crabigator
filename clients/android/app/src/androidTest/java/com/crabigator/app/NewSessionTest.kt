@@ -35,12 +35,17 @@ class NewSessionTest {
             compose.setContent { MaterialTheme(colorScheme = CrabTheme) { Surface(Modifier.fillMaxSize()) { App(model) {} } } }
             listOf("List", "PR board", "Conductor").forEach { mode ->
                 compose.onNodeWithText(mode).performClick()
-                compose.onNodeWithContentDescription("New session").assertIsDisplayed().performClick()
+                // The board's + offers New session and Watch a pull request. The Conductor's + opens the picker at once.
+                if (mode == "Conductor") compose.onNodeWithContentDescription("New session").assertIsDisplayed().performClick()
+                else {
+                    compose.onNodeWithContentDescription("New session or watch a pull request").assertIsDisplayed().performClick()
+                    compose.onNodeWithText("New session").performClick()
+                }
                 compose.onNodeWithText("/projects/NewsBlur").assertIsDisplayed()
                 listOf("Codex", "Claude", "OpenCode", "Grok", "Start session").forEach { compose.onNodeWithText(it).assertIsDisplayed() }
                 val dir = File(context.getExternalFilesDir(null), "conductor-evidence").apply { mkdirs() }
                 File(dir, "android-new-session-${mode.replace(' ', '-')}.png").outputStream().use { compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it) }
-                compose.onNodeWithContentDescription("Close menu").performClick()
+                compose.onNodeWithText("Done").performClick()
             }
         } finally { model.navigate { saved } }
     }

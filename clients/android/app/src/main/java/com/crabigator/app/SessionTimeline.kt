@@ -17,31 +17,81 @@ import androidx.compose.ui.unit.sp
 
 internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).substringBefore(' ')
 
-@Composable internal fun SessionStatsFooter(session: Session, clock: State<Long>, prefs: UiPreferences) {
+/** A List row's lines under its title, recap and computer: timing, counts, git status and changes. [items] is the row's saved set. */
+@Composable internal fun SessionStatsFooter(session: Session, clock: State<Long>, items: Set<String>) {
     val now = clock.value
     val stats = session.stats
     val duration = stats.duration(session.active, now)
     val prompt = if (stats.promptAt > 0) sessionAge(stats.promptAt, now) else "—"
     val completion = if (stats.completionAt > 0) sessionAge(stats.completionAt, now) else "—"
     val summary = buildList {
-        if (prefs.visible("sessionTime")) add("Session time: ${sessionDuration(duration)}")
-        if (prefs.visible("thinkingTime")) add("Thinking time: ${sessionDuration(stats.thinkingSeconds)}")
-        if (prefs.visible("promptRecency")) add("Last prompt: $prompt")
-        if (prefs.visible("completionRecency")) add("Last completion: $completion")
+        if ("sessionTime" in items) add("Session time: ${sessionDuration(duration)}")
+        if ("thinkingTime" in items) add("Thinking time: ${sessionDuration(stats.thinkingSeconds)}")
+        if ("promptRecency" in items) add("Last prompt: $prompt")
+        if ("completionRecency" in items) add("Last completion: $completion")
     }.joinToString("; ")
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        OneLineTimeline(summary, statusLabel = if (!session.active) "Ended" else if (session.state == "thinking") "Working" else session.state.replaceFirstChar { it.uppercase() }, prioritizeDuration = !prefs.visible("promptRecency") && !prefs.visible("completionRecency"), start = { compact ->
+        OneLineTimeline(summary, statusLabel = if (!session.active) "Ended" else if (session.state == "thinking") "Working" else session.state.replaceFirstChar { it.uppercase() }, prioritizeDuration = "promptRecency" !in items && "completionRecency" !in items, start = { compact ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (prefs.visible("sessionTime")) Stat("◉", if (compact) compactDuration(duration) else sessionDuration(duration), "Session time: ${sessionDuration(duration)}", CrabColors.Blue)
-                if (prefs.visible("thinkingTime")) Stat("◐", if (compact) compactDuration(stats.thinkingSeconds) else sessionDuration(stats.thinkingSeconds), "Thinking time: ${sessionDuration(stats.thinkingSeconds)}", Mint)
+                if ("sessionTime" in items) Stat("◉", if (compact) compactDuration(duration) else sessionDuration(duration), "Session time: ${sessionDuration(duration)}", CrabColors.Blue)
+                if ("thinkingTime" in items) Stat("◐", if (compact) compactDuration(stats.thinkingSeconds) else sessionDuration(stats.thinkingSeconds), "Thinking time: ${sessionDuration(stats.thinkingSeconds)}", Mint)
             }
         }, end = {
-            BoardRecency(session, clock, prefs.visible("promptRecency"), prefs.visible("completionRecency"), showStatus = true)
+            BoardRecency(session, clock, "promptRecency" in items, "completionRecency" in items, showStatus = true)
         })
-        if (prefs.visible("tools") || prefs.visible("compactions")) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (prefs.visible("tools")) Stat("⚒", stats.tools?.toString() ?: "—", "Tools: ${stats.tools ?: "—"}", Peach)
-            if (prefs.visible("compactions")) Stat("⊜", stats.compactions?.toString() ?: "—", "Compactions: ${stats.compactions ?: "—"}", CrabColors.Pink)
-        }
+        StatLine(countStats(session, items))
+        if (showsGit(session, items)) RowGit(session)
+        if (showsChanges(session, items)) RowChanges(session)
+    }
+}
+
+/** A PR board row's optional lines: times, counts, git status and changes. Its two recency columns already sit beside the title. */
+@Composable internal fun BoardRowLines(session: Session, clock: State<Long>, items: Set<String>) {
+    val times = listOfNotNull(
+        RowStat("◉", "Session time", session.stats.duration(session.active, clock.value)?.let(::sessionDuration), CrabColors.Blue).takeIf { "sessionTime" in items },
+        RowStat("◐", "Thinking time", session.stats.thinkingSeconds?.let(::sessionDuration), Mint).takeIf { "thinkingTime" in items })
+    val counts = countStats(session, items)
+    val git = showsGit(session, items)
+    val changes = showsChanges(session, items)
+    // Emit nothing when no line has anything to show, so the row keeps its spacing.
+    if ((times + counts).none { it.value != null } && !git && !changes) return
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        StatLine(times)
+        StatLine(counts)
+        if (git) RowGit(session)
+        if (changes) RowChanges(session)
+    }
+}
+/** Tools, compactions and how full the context window is. Context appears only when the board sent both token counts. */
+private fun countStats(session: Session, items: Set<String>) = listOfNotNull(
+    RowStat("⚒", "Tools", session.stats.tools?.toString(), Peach).takeIf { "tools" in items },
+    RowStat("⊜", "Compactions", session.stats.compactions?.toString(), Peach).takeIf { "compactions" in items },
+    session.stats.context?.let { RowStat("◔", "Context", it.label, TerminalText.palette(it.palette)) }.takeIf { "context" in items })
+/** The git line needs a branch or files not committed; the changes line needs a line added or removed. */
+private fun showsGit(session: Session, items: Set<String>) = "git" in items && (session.branch.isNotBlank() || session.uncommitted > 0)
+private fun showsChanges(session: Session, items: Set<String>) = "changes" in items && (session.additions > 0 || session.deletions > 0)
+@Composable private fun RowGit(session: Session) {
+    val files = if (session.uncommitted == 1) "1 file not committed" else "${session.uncommitted} files not committed"
+    Row(Modifier.clearAndSetSemantics { contentDescription = listOfNotNull("Branch ${session.branch}".takeIf { session.branch.isNotBlank() }, files.takeIf { session.uncommitted > 0 }).joinToString(", ") }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (session.branch.isNotBlank()) Text("⎇ ${session.branch}", color = GitGreen, fontSize = 11.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        if (session.uncommitted > 0) Text(files, color = SecondaryText, fontSize = 11.sp, lineHeight = 16.sp, maxLines = 1, softWrap = false)
+    }
+}
+@Composable private fun RowChanges(session: Session) {
+    Row(Modifier.clearAndSetSemantics { contentDescription = "Changes: ${session.additions} lines added, ${session.deletions} removed" }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Δ", color = CrabColors.Pink, fontSize = 11.sp, lineHeight = 16.sp)
+        Text("+${session.additions}", color = Mint, fontSize = 11.sp, lineHeight = 16.sp, maxLines = 1, softWrap = false)
+        Text("−${session.deletions}", color = CrabColors.Red, fontSize = 11.sp, lineHeight = 16.sp, maxLines = 1, softWrap = false)
+    }
+}
+private val GitGreen = Color(0xFF7EE787)
+
+private class RowStat(val symbol: String, val label: String, val value: String?, val color: Color)
+/** A stat with no data shows a dash beside one that has some. A line with no data at all is left out. */
+@Composable private fun StatLine(stats: List<RowStat>) {
+    if (stats.none { it.value != null }) return
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        stats.forEach { Stat(it.symbol, it.value ?: "—", "${it.label}: ${it.value ?: "unknown"}", it.color) }
     }
 }
 
@@ -84,7 +134,7 @@ internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).
 
 @Composable private fun Stat(symbol: String, value: String, description: String, color: Color) {
     Row(Modifier.clearAndSetSemantics { contentDescription = description }, horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(symbol, color = Muted, fontSize = 13.sp, lineHeight = 16.sp, maxLines = 1, softWrap = false)
+        Text(symbol, color = color, fontSize = 13.sp, lineHeight = 16.sp, maxLines = 1, softWrap = false)
         Text(value, color = color, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.sp, maxLines = 1, softWrap = false)
     }
 }

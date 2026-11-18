@@ -13,7 +13,8 @@ class SessionStatsTest {
         mapOf(0L to "0", 512L to "512", 1000L to "1k", 9500L to "9.5k", 9960L to "10k", 258400L to "258k", 999600L to "1M", 1500000L to "1.5M")
             .forEach { (count, text) -> assertEquals("$count", text, ContextUsage.tokens(count)) }
     }
-    @Test fun contextStatStartsHiddenAndTogglesOn() {
+    // The old Visible stats switch. A List row and the stats strip follow it for context until their own set is first changed (ViewPreferencesTest).
+    @Test fun oldContextSwitchStartsOffAndTogglesOn() {
         val prefs = UiPreferences(hidden = setOf("tools"))
         assertTrue(prefs.visible("compactions"))
         assertFalse(prefs.visible("context"))

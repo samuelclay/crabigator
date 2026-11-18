@@ -48,9 +48,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,6 +72,11 @@ internal val Panel = Color(0xFF1B2129)
 internal val Muted = CrabColors.Gray
 internal val Peach = CrabColors.Orange
 internal val Mint = CrabColors.Green
+// The settings design's greys: borders, and three weights of text.
+internal val Hairline = Color(0xFF303A46)
+internal val PrimaryText = Color(0xFFE6EDF3)
+internal val SecondaryText = Color(0xFFC4CDD8)
+internal val MutedText = Color(0xFF9AA3AD)
 internal val CrabTheme = darkColorScheme(primary = Peach, onPrimary = Ink, background = Ink, surface = Ink, surfaceContainer = Panel, onSurface = Color(0xFFE9EEF4), secondary = Mint, secondaryContainer = Color(0xFF3D3028), onSecondaryContainer = Peach, outline = Color(0xFF37414E))
 
 class MainActivity : ComponentActivity() {
@@ -102,7 +104,6 @@ class MainActivity : ComponentActivity() {
     var handledNavigation by rememberSaveable { mutableLongStateOf(0L) }
     var menu by remember { mutableStateOf<String?>(null) }
     var menuAnchor by remember { mutableStateOf(Rect.Zero) }
-    var boardSearchRequest by remember { mutableIntStateOf(0) }
     var closingSession by remember(s.selected?.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(s.navigationId) {
         if (handledNavigation != s.navigationId) {
@@ -133,9 +134,12 @@ class MainActivity : ComponentActivity() {
                     listMode, { next ->
                         if (listMode == next) { if (wide) model.navigate { it.copy(expanded = !it.expanded) } }
                         else { model.navigate { it.copy(listMode = next) } }
-                    }, if (wide) fullBoard else null, { model.navigate { it.copy(expanded = false) } }, boardSearchRequest,
+                    }, if (wide) fullBoard else null, { model.navigate { it.copy(expanded = false) } },
+                        viewOpen = menu == "View List" || menu == "View PR board",
                         newSession = { menuAnchor = it; menu = "Create session" },
-                        settings = { menuAnchor = it; menu = "Settings" })
+                        watch = { menuAnchor = it; menu = "Watch PR" },
+                        account = { menuAnchor = it; menu = "Account" },
+                        view = { menuAnchor = it; menu = if (listMode) "View List" else "View PR board" })
             }
             val entrance = remember(s.selected != null) { Animatable(1f) }
             var swipe by remember(s.selected?.id) { mutableStateOf<Float?>(null) }
@@ -181,7 +185,7 @@ class MainActivity : ComponentActivity() {
                 if (s.selected != null) Box(Modifier.fillMaxSize().clipToBounds()) {
                     Box(Modifier.fillMaxSize().graphicsLayer { translationX = size.width * progress }
                         .background(Ink).pointerInput(Unit) { detectTapGestures {} }) {
-                        SessionPages(s, model, wide, closeSession, swipeModifier, visible = !fullBoard) { menuAnchor = it; menu = "Style" }
+                        SessionPages(s, model, wide, closeSession, swipeModifier, visible = !fullBoard, viewOpen = menu == "View Session") { menuAnchor = it; menu = "View Session" }
                     }
                 }
             }
@@ -205,13 +209,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     if (navigation.conductor) conductorState.SaveableStateProvider("conductor") { ConductorView(model, Modifier.fillMaxSize().background(Ink).safeDrawingPadding(), newSession = { menuAnchor = it; menu = "Create session" }) }
-    MenuPanel(menu, menuAnchor, model, notifications, { destination ->
-        when (destination) {
-            "Search" -> { menu = null; boardSearchRequest++ }
-            "Toggle fullscreen" -> { menu = null; model.navigate { it.copy(expanded = !it.expanded) } }
-            else -> menu = destination
-        }
-    }, { menu = null })
+    MenuPanel(menu, menuAnchor, model, notifications, { menu = it }, { menu = null })
     }
 
 }
@@ -241,13 +239,13 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun Board(roster: List<Session>, pullRequests: List<PullRequest>, selectedId: String?, rosterStatus: RosterStatus, model: SessionModel,
-    list: Boolean, mode: (Boolean) -> Unit, expanded: Boolean?, selected: () -> Unit, searchRequest: Int, newSession: (Rect) -> Unit, settings: (Rect) -> Unit) {
+    list: Boolean, mode: (Boolean) -> Unit, expanded: Boolean?, selected: () -> Unit, viewOpen: Boolean, newSession: (Rect) -> Unit, watch: (Rect) -> Unit, account: (Rect) -> Unit, view: (Rect) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }; var searching by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(searchRequest) { if (searchRequest > 0) searching = true }
     val now = remember { flow { while (true) { emit(System.currentTimeMillis() / 1000); delay(1000) } } }
         .collectAsStateWithLifecycle(initialValue = System.currentTimeMillis() / 1000)
-    var settingsAnchor by remember { mutableStateOf(Rect.Zero) }
+    var accountAnchor by remember { mutableStateOf(Rect.Zero) }
     var newSessionAnchor by remember { mutableStateOf(Rect.Zero) }
+    var addMenu by remember { mutableStateOf(false) }
     val prefs by model.preferences.collectAsStateWithLifecycle()
     val all = prefs.showEnded
     var machineOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -270,13 +268,18 @@ class MainActivity : ComponentActivity() {
     val density = LocalDensity.current
     val spacing = animatedBoardSpacing(prefs.density)
     val floating = expanded == true
-    val headerSpace by animateDpAsState(if (floating && prefs.groupByComputer && !searching) 0.dp else 60.dp, tween(360), label = "Board header space")
+    // A full-width tablet board floats its toolbar in the middle of the filter bar's row. Search gives the toolbar a row of its own.
+    val shareRow = floating && !searching
+    val headerSpace by animateDpAsState(if (shareRow) 0.dp else 60.dp, tween(360), label = "Board header space")
+    val computers = remember(roster, prefs.boardComputer) { BoardFilters.computers(roster, prefs.boardComputer) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val toolbarWidth by animateDpAsState(if (floating) 276.dp else maxWidth, tween(360), label = "Board toolbar width")
+        val floatingWidth = if (expanded != null && selectedId != null) 328.dp else 276.dp
+        val toolbarWidth by animateDpAsState(if (floating) floatingWidth else maxWidth, tween(360), label = "Board toolbar width")
         Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(headerSpace))
             if (searching) OutlinedTextField(query, { query = it }, placeholder = { Text("Search") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
-            CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * prefs.boardFontSize / 14f), LocalBoardSpacing provides spacing, LocalFloatingBoardToolbar provides floating) {
+            BoardFilterBar(prefs, computers, model::style, viewOpen, Modifier.padding(top = if (shareRow) 4.dp else if (searching) 8.dp else 0.dp, bottom = 8.dp), centerGap = if (shareRow) floatingWidth + 12.dp else 0.dp, view = view)
+            CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * prefs.boardFontSize / 14f), LocalBoardSpacing provides spacing) {
                 if (roster.isEmpty() && pullRequests.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     RosterPlaceholder(rosterStatus, model::retryRoster) { EmptyPairing(model) }
                 }
@@ -314,9 +317,17 @@ class MainActivity : ComponentActivity() {
             Row(Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures {} }.padding(horizontal = 8.dp, vertical = if (floating) 2.dp else 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Image(painterResource(R.drawable.ic_crabigator), "Crabigator", Modifier.padding(8.dp).size(28.dp))
                 Spacer(Modifier.weight(1f))
-                Control(R.drawable.ic_add, "New session", modifier = Modifier.onGloballyPositioned { newSessionAnchor = it.boundsInRoot() }) { newSession(newSessionAnchor) }
+                Box {
+                    Control(R.drawable.ic_add, "New session or watch a pull request", modifier = Modifier.onGloballyPositioned { newSessionAnchor = it.boundsInRoot() }) { addMenu = true }
+                    DropdownMenu(addMenu, { addMenu = false }) {
+                        DropdownMenuItem(text = { Text("New session") }, onClick = { addMenu = false; newSession(newSessionAnchor) })
+                        DropdownMenuItem(text = { Text("Watch a pull request") }, onClick = { addMenu = false; watch(newSessionAnchor) })
+                    }
+                }
                 Control(R.drawable.ic_search, "Search", selected = searching) { searching = !searching; if (!searching) query = "" }
-                Control(R.drawable.ic_settings, "Settings", modifier = Modifier.onGloballyPositioned { settingsAnchor = it.boundsInRoot() }) { settings(settingsAnchor) }
+                // On a tablet with a session open, the board is either a sidebar beside it or the whole screen.
+                if (expanded != null && selectedId != null) Control(if (expanded) R.drawable.ic_collapse else R.drawable.ic_expand, if (expanded) "Return to session" else "Expand List / PR board") { mode(list) }
+                Control(R.drawable.ic_account, "Account and notifications", modifier = Modifier.onGloballyPositioned { accountAnchor = it.boundsInRoot() }) { account(accountAnchor) }
             }
         }
         BoardModeFooter(list, mode, expanded, Modifier.align(Alignment.BottomCenter).padding(12.dp), onConductor = { model.navigate { it.copy(conductor = true) } })
@@ -324,21 +335,17 @@ class MainActivity : ComponentActivity() {
 }
 @Composable internal fun MachineHeader(name: String, count: Int, collapsed: Boolean, modifier: Modifier = Modifier, countNoun: String = "session", toggle: () -> Unit) {
     val spacing = LocalBoardSpacing.current
-    val floating = LocalFloatingBoardToolbar.current
     val angle by animateFloatAsState(if (collapsed) -90f else 0f, tween(240), label = "Machine folder")
     Surface(onClick = toggle, color = Ink, modifier = modifier.fillMaxWidth().semantics {
         heading()
         stateDescription = if (collapsed) "Collapsed" else "Expanded"
     }) {
-        BoxWithConstraints {
-            val nameWidth = if (floating) ((maxWidth - 308.dp) / 2 - 36.dp).coerceAtLeast(60.dp) else maxWidth
-            Row(Modifier.heightIn(min = if (floating) 56.dp else 44.dp).padding(horizontal = 8.dp, vertical = spacing.gap(8)), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(painterResource(if (countNoun == "session") R.drawable.ic_machine else R.drawable.ic_board), null, tint = Muted, modifier = Modifier.size(18.dp))
-                Text(name, color = if (countNoun == "session") CrabColors.computer(name) else Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).wrapContentWidth(Alignment.Start).widthIn(max = nameWidth))
-                Text(if (count == 1) "1 $countNoun" else "$count ${countNoun}s", color = Muted, fontSize = 12.sp,
-                    modifier = Modifier.background(Panel, RoundedCornerShape(6.dp)).padding(horizontal = 7.dp, vertical = 2.dp))
-                Icon(painterResource(R.drawable.ic_chevron_down), null, tint = Muted, modifier = Modifier.size(18.dp).rotate(angle))
-            }
+        Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 8.dp, vertical = spacing.gap(8)), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(painterResource(if (countNoun == "session") R.drawable.ic_machine else R.drawable.ic_board), null, tint = Muted, modifier = Modifier.size(18.dp))
+            Text(name, color = if (countNoun == "session") CrabColors.computer(name) else Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(if (count == 1) "1 $countNoun" else "$count ${countNoun}s", color = Muted, fontSize = 12.sp,
+                modifier = Modifier.background(Panel, RoundedCornerShape(6.dp)).padding(horizontal = 7.dp, vertical = 2.dp))
+            Icon(painterResource(R.drawable.ic_chevron_down), null, tint = Muted, modifier = Modifier.size(18.dp).rotate(angle))
         }
     }
 }
@@ -348,16 +355,17 @@ class MainActivity : ComponentActivity() {
         Icon(painterResource(icon), contentDescription = label, tint = if (selected) Peach else Muted, modifier = Modifier.size(22.dp))
     }
 }
-@Composable private fun SessionCard(session: Session, selected: Boolean, now: State<Long>? = null, prefs: UiPreferences = UiPreferences(), showMachine: Boolean = true, modifier: Modifier = Modifier, open: () -> Unit) {
+@Composable internal fun SessionCard(session: Session, selected: Boolean, now: State<Long>? = null, prefs: UiPreferences = UiPreferences(), showMachine: Boolean = true, modifier: Modifier = Modifier, open: () -> Unit) {
     val spacing = LocalBoardSpacing.current
+    val items = prefs.listRowItems
     val selection by animateFloatAsState(if (selected) 1f else 0f, tween(if (selected) 120 else 350), label = "Session selection")
     Surface(onClick = open, modifier = modifier.semantics { this.selected = selected },
         color = lerp(Panel, Peach.copy(alpha = .13f).compositeOver(Ink), selection),
         shape = RoundedCornerShape(12.dp), border = BorderStroke(2.dp, Peach.copy(alpha = selection))) {
         Box(Modifier.padding(horizontal = 10.dp, vertical = spacing.gap(10))) {
             SessionRow(session, clickable = false, showMachine = showMachine, footer = {
-                if (prefs.boardRecaps && session.recap.isNotBlank()) Text(session.recap, color = CrabColors.Recap, fontSize = 12.sp)
-                if (now != null) SessionStatsFooter(session, now, prefs)
+                if ("recap" in items && session.recap.isNotBlank()) Text(session.recap, color = CrabColors.Recap, fontSize = 12.sp, lineHeight = spacing.lineHeight(16))
+                if (now != null) SessionStatsFooter(session, now, items)
             }, open = open)
         }
     }
@@ -366,16 +374,11 @@ class MainActivity : ComponentActivity() {
     val spacing = LocalBoardSpacing.current
     val color = remember(session.color) { runCatching { Color(android.graphics.Color.parseColor(session.color)) }.getOrDefault(Peach) }
     val background = remember(session.background) { runCatching { Color(android.graphics.Color.parseColor(session.background)) }.getOrDefault(Panel) }
-    val title = remember(session.title, session.machine, showMachine) { buildAnnotatedString {
-        append(session.title)
-        if (showMachine && session.machine.isNotBlank()) withStyle(SpanStyle(color = CrabColors.computer(session.machine), fontSize = 11.sp, fontWeight = FontWeight.Normal)) {
-            append("  ·\u00a0${session.machine}")
-        }
-    } }
     Row(Modifier.fillMaxWidth().then(if (clickable) Modifier.clickable(onClick = open) else Modifier).padding(vertical = spacing.gap(4)), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
         Surface(color = background, shape = RoundedCornerShape(8.dp), modifier = Modifier.width(58.dp).alignBy { it.measuredHeight / 2 }) { Text(session.glyph, color = color, fontSize = 16.sp, lineHeight = 20.sp, textAlign = TextAlign.Center, maxLines = 1, softWrap = false, modifier = Modifier.padding(vertical = 5.dp)) }
         Column(Modifier.weight(1f).alignBy(SessionTitleCenter), verticalArrangement = Arrangement.spacedBy(spacing.gap(6))) {
-            Text(title, color = CrabColors.Title, fontSize = 14.sp, lineHeight = spacing.lineHeight(19), fontWeight = FontWeight.Medium, maxLines = if (spacing.tight) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis, modifier = Modifier.sessionTitleAlignment().animateContentSize(tween(300), alignment = Alignment.TopStart))
+            Text(session.title, color = CrabColors.Title, fontSize = 14.sp, lineHeight = spacing.lineHeight(19), fontWeight = FontWeight.Medium, maxLines = if (spacing.tight) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis, modifier = Modifier.sessionTitleAlignment().animateContentSize(tween(300), alignment = Alignment.TopStart))
+            if (showMachine && session.machine.isNotBlank()) Text(session.machine, color = CrabColors.computer(session.machine), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             footer()
         }
     }

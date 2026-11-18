@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
     val uri = LocalUriHandler.current
     val displayGroups = if (prefs.boardGrouping == "prs") groupBoardByPullRequest(groups, clock.value) { prefs.includesActivity(it, clock.value) } else groups
     val order = remember(displayGroups) { displayGroups.flatMap { it.sessions }.map { it.session } }
+    val rowItems = prefs.boardRowItems
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 840.dp
         if (displayGroups.isEmpty() && watched.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -70,13 +71,13 @@ import androidx.compose.ui.unit.sp
                                 val link = block.pr.url.takeIf { it.startsWith("https://") }
                                 BoardPrRow(block.pr, wide, Modifier.padding(horizontal = 8.dp).then(if (link != null) Modifier.clickable { uri.openUri(link) } else Modifier))
                                 block.sessions.forEach { entry ->
-                                    BoardSessionBlock(entry.copy(prs = emptyList()), selectedId == entry.session.id, wide, clock, prefs.boardRecaps, showMachine = !prefs.groupByComputer) { select(entry.session, order) }
+                                    BoardSessionBlock(entry.copy(prs = emptyList()), selectedId == entry.session.id, wide, clock, rowItems, showMachine = !prefs.groupByComputer) { select(entry.session, order) }
                                 }
                             }
                         }
                         items(repo.sessions, key = { "session-${it.session.id}" }, contentType = { "session" }) { entry ->
                             Column(Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180)).padding(bottom = spacing.gap(5))) {
-                                BoardSessionBlock(entry, selectedId == entry.session.id, wide, clock, prefs.boardRecaps, showMachine = !prefs.groupByComputer) { select(entry.session, order) }
+                                BoardSessionBlock(entry, selectedId == entry.session.id, wide, clock, rowItems, showMachine = !prefs.groupByComputer) { select(entry.session, order) }
                             }
                         }
                     }
@@ -97,7 +98,8 @@ import androidx.compose.ui.unit.sp
     }
 }
 
-@Composable internal fun BoardSessionBlock(entry: BoardSession, selected: Boolean, wide: Boolean, clock: State<Long>, recaps: Boolean = false, showMachine: Boolean = false, open: () -> Unit) {
+/** [items] is the PR board row's saved set: the two recency columns and the optional lines under the title. */
+@Composable internal fun BoardSessionBlock(entry: BoardSession, selected: Boolean, wide: Boolean, clock: State<Long>, items: Set<String> = setOf("promptRecency", "completionRecency"), showMachine: Boolean = false, open: () -> Unit) {
     val spacing = LocalBoardSpacing.current
     val session = entry.session
     val selection by animateFloatAsState(if (selected) 1f else 0f, tween(if (selected) 120 else 350), label = "Session selection")
@@ -119,7 +121,7 @@ import androidx.compose.ui.unit.sp
                         if (showMachine) Text(session.machineGroup, color = CrabColors.computer(session.machine), fontSize = 11.sp)
                         if (!wide) Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(session.branch, color = Muted, fontSize = 11.sp, lineHeight = spacing.lineHeight(15), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                            BoardRecency(session, clock, showStatus = true)
+                            BoardRecency(session, clock, "promptRecency" in items, "completionRecency" in items, showStatus = true)
                         }
                     }
                     if (wide) {
@@ -127,12 +129,13 @@ import androidx.compose.ui.unit.sp
                         Row(Modifier.width(360.dp), verticalAlignment = Alignment.Top) {
                             SessionStatus(session)
                             Spacer(Modifier.width(8.dp))
-                            BoardRecency(session, clock)
+                            BoardRecency(session, clock, "promptRecency" in items, "completionRecency" in items)
                             Spacer(Modifier.weight(1f))
                         }
                     }
                 }
-                if (recaps && session.recap.isNotBlank()) Text(session.recap, color = CrabColors.Recap, fontSize = 12.sp)
+                if ("recap" in items && session.recap.isNotBlank()) Text(session.recap, color = CrabColors.Recap, fontSize = 12.sp, lineHeight = spacing.lineHeight(16))
+                BoardRowLines(session, clock, items)
                 entry.prs.filter { it.visibleOnBoard(session.id) }.forEach { BoardPrRow(it, wide) }
             }
         }

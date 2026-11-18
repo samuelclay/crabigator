@@ -30,7 +30,7 @@ class SessionTimelineTest {
         compose.setContent {
             CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale.value)) {
                 MaterialTheme {
-                    Box(Modifier.width(width.value).testTag("timeline")) { SessionStatsFooter(session.value, now, prefs.value) }
+                    Box(Modifier.width(width.value).testTag("timeline")) { SessionStatsFooter(session.value, now, prefs.value.listRowItems) }
                 }
             }
         }

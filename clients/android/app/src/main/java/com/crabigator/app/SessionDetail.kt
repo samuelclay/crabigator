@@ -21,10 +21,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 
-@Composable internal fun SessionDetail(s: AppState, model: SessionModel, wide: Boolean, close: () -> Unit, swipe: Modifier = Modifier, active: Boolean = true, style: (Rect) -> Unit) {
+@Composable internal fun SessionDetail(s: AppState, model: SessionModel, wide: Boolean, close: () -> Unit, swipe: Modifier = Modifier, active: Boolean = true, viewOpen: Boolean = false, view: (Rect) -> Unit) {
     val session = s.selected ?: return
     val p by model.preferences.collectAsStateWithLifecycle()
-    var styleAnchor by remember { mutableStateOf(Rect.Zero) }
+    var viewAnchor by remember { mutableStateOf(Rect.Zero) }
     val moduleState = rememberSaveableStateHolder()
     var pinned by rememberSaveable(session.id) { mutableStateOf(true) }
     var loadingSlowly by remember(session.id) { mutableStateOf(false) }
@@ -42,7 +42,7 @@ import kotlinx.coroutines.delay
                     Text(if (s.connected) "${session.machine} · Live" else if (!session.active) "${session.machine} · Ended" else if (s.desktopStatusKnown) "${session.machine} · Disconnected" else "Connecting…", fontSize = 11.sp, lineHeight = 15.sp, color = if (s.connected) Mint else Muted)
                 }
                 Control(R.drawable.ic_follow_output, if (pinned) "Stop following output" else "Follow latest output", selected = pinned) { pinned = !pinned }
-                Control(R.drawable.ic_style, "Style", modifier = Modifier.onGloballyPositioned { styleAnchor = it.boundsInRoot() }) { style(styleAnchor) }
+                ViewButton(viewOpen, Modifier.padding(horizontal = 4.dp).onGloballyPositioned { viewAnchor = it.boundsInRoot() }) { view(viewAnchor) }
             }
         }
         HorizontalDivider(color = Color(0xFF303A46))

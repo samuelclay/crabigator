@@ -23,7 +23,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
     close: () -> Unit,
     swipe: Modifier,
     visible: Boolean = true,
-    style: (Rect) -> Unit,
+    viewOpen: Boolean = false,
+    view: (Rect) -> Unit,
 ) {
     val selected = state.selected?.id ?: return
     val frames = remember { mutableMapOf<String, AppState>() }
@@ -44,7 +45,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
                     while (true) awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
                 }
             })) {
-            SessionDetail(frame, model, wide, close, if (active) swipe else Modifier, active, style)
+            SessionDetail(frame, model, wide, close, if (active) swipe else Modifier, active, viewOpen && active, view)
         }
     }
 }

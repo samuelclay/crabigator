@@ -14,6 +14,8 @@ data class SessionStats(
     val completionAt: Long = 0,
     val tools: Long? = null,
     val compactions: Long? = null,
+    /** Null when the board sent no token counts; the row then shows nothing for context. */
+    val context: ContextUsage? = null,
 ) {
     fun duration(active: Boolean, now: Long): Long? {
         if (!active && workSeconds != null) return workSeconds.coerceAtLeast(0)
@@ -30,6 +32,7 @@ data class SessionStats(
                 stats?.number("prompts"), stats?.number("completions"),
                 session.optLong("prompts_changed_at"), session.optLong("completions_changed_at"),
                 stats?.number("tools"), stats?.number("compressions"),
+                stats?.let(ContextUsage::parse),
             )
         }
         private fun JSONObject.number(key: String): Long? = if (isNull(key)) null else optLong(key).coerceAtLeast(0)
@@ -61,10 +64,12 @@ internal fun sessionAge(timestamp: Long, now: Long): String {
 data class ContextUsage(val used: Long, val limit: Long) {
     val percent: Long get() = Math.round(used * 100.0 / limit)
     val label: String get() = "${tokens(used)} / ${tokens(limit)} · $percent%"
+    /** Calm, then a warning as the window fills, as in the CLI: xterm 75, 220 from 70% and 203 from 85%. */
+    val palette: Int get() = if (percent >= 85) 203 else if (percent >= 70) 220 else 75
 
     companion object {
         fun parse(stats: JSONObject): ContextUsage? {
-            if (!stats.has("context_used") || !stats.has("context_limit")) return null
+            if (stats.isNull("context_used") || stats.isNull("context_limit")) return null
             val limit = stats.optLong("context_limit")
             return if (limit > 0) ContextUsage(stats.optLong("context_used").coerceAtLeast(0), limit) else null
         }

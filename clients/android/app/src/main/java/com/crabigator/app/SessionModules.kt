@@ -229,7 +229,7 @@ internal class ModuleSummary(data: SessionModuleData, prs: List<PullRequest>, pr
     val recent = listOf(
         "completions" to stats.optLong("completions_changed_at", session.stats.completionAt),
         "prompts" to stats.optLong("prompts_changed_at", session.stats.promptAt)
-    ).filter { (key, timestamp) -> prefs.visible(key) && timestamp > 0 && sessionAge(timestamp, now).endsWith(" ago") }
+    ).filter { (key, timestamp) -> key in prefs.sessionStatItems && timestamp > 0 && sessionAge(timestamp, now).endsWith(" ago") }
         .maxByOrNull { it.second }?.first
     SubcomposeLayout(modifier.height(44.dp)) { constraints ->
         fun width(slot: String, agoKeys: Set<String>): Int = subcompose(slot) {
@@ -274,25 +274,22 @@ internal class ModuleSummary(data: SessionModuleData, prs: List<PullRequest>, pr
         }
     }
 }
-@Composable private fun ModuleStatsRow(session: Session, stats: JSONObject, prefs: UiPreferences, now: Long, agoKeys: Set<String>, modifier: Modifier = Modifier) {
+/** The stats strip. It shows the session's saved set of stats; context only once the desktop has sent token counts. */
+@Composable internal fun ModuleStatsRow(session: Session, stats: JSONObject, prefs: UiPreferences, now: Long, agoKeys: Set<String>, modifier: Modifier = Modifier) {
+    val shown = prefs.sessionStatItems
     fun age(key: String, fallback: Long): String {
         val timestamp = stats.optLong(key, fallback)
         return if (timestamp > 0) sessionAge(timestamp, now) else "—"
     }
     Row(modifier.height(44.dp).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         SessionStatus(session)
-        if (prefs.visible("sessionTime")) ModuleStat("◉", sessionDuration(if (stats.has("work_seconds")) stats.optLong("work_seconds") else session.stats.workSeconds), "Session time", CrabColors.Blue)
-        if (prefs.visible("thinkingTime")) ModuleStat("◐", sessionDuration(if (stats.has("thinking_seconds")) stats.optLong("thinking_seconds") else session.stats.thinkingSeconds), "Thinking time", CrabColors.Green)
-        if (prefs.visible("prompts")) ModuleStat("⟩", stats.opt("prompts")?.toString() ?: session.stats.prompts?.toString() ?: "—", "Prompts", CrabColors.Orange, age("prompts_changed_at", session.stats.promptAt), "prompts" !in agoKeys)
-        if (prefs.visible("completions")) ModuleStat("⋖", stats.opt("completions")?.toString() ?: session.stats.completions?.toString() ?: "—", "Completions", CrabColors.DarkOrange, age("completions_changed_at", session.stats.completionAt), "completions" !in agoKeys)
-        if (prefs.visible("tools")) ModuleStat("⚒", stats.opt("tools")?.toString() ?: session.stats.tools?.toString() ?: "—", "Tools", CrabColors.Orange)
-        if (prefs.visible("compactions")) ModuleStat("⊜", stats.opt("compressions")?.toString() ?: session.stats.compactions?.toString() ?: "—", "Compactions", CrabColors.Purple)
-        if (prefs.visible("context")) {
-            val context = ContextUsage.parse(stats)
-            // Calm, then a warning as the window fills, as in the CLI.
-            val color = when { context == null -> CrabColors.Title; context.percent >= 85 -> CrabColors.Red; context.percent >= 70 -> CrabColors.Yellow; else -> CrabColors.Title }
-            ModuleStat("◔", context?.label ?: "—", "Context", color)
-        }
+        if ("sessionTime" in shown) ModuleStat("◉", sessionDuration(if (stats.has("work_seconds")) stats.optLong("work_seconds") else session.stats.workSeconds), "Session time", CrabColors.Blue)
+        if ("thinkingTime" in shown) ModuleStat("◐", sessionDuration(if (stats.has("thinking_seconds")) stats.optLong("thinking_seconds") else session.stats.thinkingSeconds), "Thinking time", CrabColors.Green)
+        if ("prompts" in shown) ModuleStat("⟩", stats.opt("prompts")?.toString() ?: session.stats.prompts?.toString() ?: "—", "Prompts", CrabColors.Orange, age("prompts_changed_at", session.stats.promptAt), "prompts" !in agoKeys)
+        if ("completions" in shown) ModuleStat("⋖", stats.opt("completions")?.toString() ?: session.stats.completions?.toString() ?: "—", "Completions", CrabColors.DarkOrange, age("completions_changed_at", session.stats.completionAt), "completions" !in agoKeys)
+        if ("tools" in shown) ModuleStat("⚒", stats.opt("tools")?.toString() ?: session.stats.tools?.toString() ?: "—", "Tools", CrabColors.Orange)
+        if ("compactions" in shown) ModuleStat("⊜", stats.opt("compressions")?.toString() ?: session.stats.compactions?.toString() ?: "—", "Compactions", CrabColors.Purple)
+        if ("context" in shown) (ContextUsage.parse(stats) ?: session.stats.context)?.let { ModuleStat("◔", it.label, "Context", TerminalText.palette(it.palette)) }
     }
 }
 @Composable private fun ModuleStat(symbol: String, value: String, label: String, color: Color, age: String = "", compact: Boolean = false) {
