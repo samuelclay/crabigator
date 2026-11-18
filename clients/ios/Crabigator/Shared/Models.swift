@@ -14,6 +14,9 @@ struct Session: Identifiable, Equatable {
     var active: Bool
     var startedAt, endedAt, lastSeenAt, promptAt, completionAt, recapAt: Int
     var workSeconds, thinkingSeconds, tools, compactions: Int?
+    /// Files not committed in the session's worktree, and the lines they add and remove.
+    var uncommitted, additions, deletions: Int
+    var context: ContextUsage?
     var attention: Bool { active && ["question", "permission"].contains(state) }
     var activityAt: Int { max(promptAt, completionAt, startedAt) }
     init(_ j: JSON) {
@@ -31,6 +34,8 @@ struct Session: Identifiable, Equatable {
         workSeconds = (stats["work_seconds"] as? Int).map { max(0, $0) }
         thinkingSeconds = (stats["thinking_seconds"] as? Int).map { max(0, $0) }
         tools = stats["tools"] as? Int; compactions = stats["compressions"] as? Int
+        uncommitted = max(0, j.int("uncommitted")); additions = max(0, j.int("additions")); deletions = max(0, j.int("deletions"))
+        context = ContextUsage(stats)
     }
     func boardActivity(_ now: Int, prs: [PullRequest]) -> Int {
         // Waiting for input keeps its attention badge, but ages from the last prompt.
@@ -89,6 +94,8 @@ struct ContextUsage: Equatable {
         self.used = used; self.limit = limit
     }
     var percent: Int { Int((Double(used) * 100 / Double(limit)).rounded()) }
+    /// Calm, then a warning as the window fills, as in the CLI.
+    var palette: Int { percent >= 85 ? 203 : percent >= 70 ? 220 : 75 }
     var label: String { "\(Self.tokens(used)) / \(Self.tokens(limit)) · \(percent)%" }
     /// A token count in a few characters, as the CLI shows it: 512, 9.5k, 186k, 1M, 1.5M.
     static func tokens(_ count: Int) -> String {
@@ -174,6 +181,58 @@ struct Preferences: Codable, Equatable {
     /// before they existed; turning one on records it here.
     static let optInStats: Set<String> = ["context"]
     private var shownStats: Set<String>?
+    /// What a List row, a PR board row and the session's stats strip show. A set that was
+    /// never saved follows the older Show recaps and Visible stats switches.
+    enum Shown: CaseIterable {
+        case listRow, boardRow, sessionStats
+        var items: [String] {
+            self == .sessionStats ? ["sessionTime", "thinkingTime", "prompts", "completions", "tools", "compactions", "context"]
+                : ["recap", "sessionTime", "thinkingTime", "promptRecency", "completionRecency", "tools", "compactions", "context", "git", "changes"]
+        }
+    }
+    private var listRow: Set<String>?
+    private var boardRow: Set<String>?
+    private var sessionStats: Set<String>?
+    func shown(_ set: Shown) -> Set<String> {
+        let recap = boardRecaps ? ["recap"] : []
+        switch set {
+        case .listRow: return listRow ?? Set(starting(["sessionTime", "thinkingTime", "promptRecency", "completionRecency", "tools", "compactions"]) + recap)
+        // PR board rows showed both recency columns and no stats.
+        case .boardRow: return boardRow ?? Set(["promptRecency", "completionRecency"] + recap)
+        case .sessionStats: return sessionStats ?? Set(starting(["sessionTime", "thinkingTime", "prompts", "completions", "tools", "compactions"]))
+        }
+    }
+    /// The stats whose older switch was on. Context joins them when its own older switch was
+    /// on, or when every one of these was: a row that shows all the rest has a use for it.
+    /// A stat that never had a switch counts as on.
+    private func starting(_ stats: [String]) -> [String] {
+        let on = stats.filter(visible)
+        return on + (visible("context") || on.count == stats.count ? ["context"] : [])
+    }
+    func shows(_ key: String, in set: Shown) -> Bool { shown(set).contains(key) }
+    /// The first change saves the whole set, which then stops following the older switches.
+    mutating func toggle(_ key: String, in set: Shown) {
+        var items = shown(set)
+        if !items.insert(key).inserted { items.remove(key) }
+        switch set { case .listRow: listRow = items; case .boardRow: boardRow = items; case .sessionStats: sessionStats = items }
+    }
+    /// The activity windows in hours, shortest first; 0 shows every age.
+    static let ageChoices = [1, 3, 6, 9, 12, 24, 0]
+    static func ageLabel(_ hours: Int) -> String { hours == 0 ? "All" : "\(hours)h" }
+    static func ageMenuLabel(_ hours: Int) -> String { hours == 0 ? "All ages" : hours == 1 ? "Last hour" : "Last \(hours) hours" }
+    /// The board's colour for the time band a window reaches back to.
+    static func agePalette(_ hours: Int) -> Int { BoardAge.allCases[ageChoices.firstIndex(of: hours) ?? 5].palette }
+    /// The List's "Group by" choice, stored in the two older settings.
+    var listGroupBy: GroupBy {
+        get { GroupBy(computer: groupByComputer, project: grouping == "project") }
+        set { groupByComputer = newValue.byComputer; grouping = newValue.byProject ? "project" : "all" }
+    }
+    /// The PR board always groups by time band and repository, so its choice only sets the
+    /// computer grouping it shares with the List.
+    var boardGroupBy: GroupBy {
+        get { groupByComputer ? .computer : .one }
+        set { groupByComputer = newValue.byComputer }
+    }
     func includesActivity(_ timestamp: Int, now: Int) -> Bool {
         guard boardAgeHours > 0 else { return true }
         let cutoff = boardAgeHours == 24 ? BoardAge.day : BoardAge.age(boardAgeHours * 3600 - 1)
@@ -193,6 +252,14 @@ struct Preferences: Codable, Equatable {
     }
     static func load() -> Self { UserDefaults.standard.data(forKey: "appearance").flatMap { try? JSONDecoder().decode(Self.self, from: $0) } ?? Self() }
     func save() { if let data = try? JSONEncoder().encode(self) { UserDefaults.standard.set(data, forKey: "appearance") } }
+}
+
+enum GroupBy: String, CaseIterable {
+    case one, computer, project, both
+    init(computer: Bool, project: Bool) { self = computer ? (project ? .both : .computer) : (project ? .project : .one) }
+    var byComputer: Bool { self == .computer || self == .both }
+    var byProject: Bool { self == .project || self == .both }
+    var label: String { ["one": "One list", "computer": "Computer", "project": "Project", "both": "Computer, then project"][rawValue]! }
 }
 
 enum BoardActions {

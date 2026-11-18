@@ -2,7 +2,13 @@
 
 A native SwiftUI app with a read-only UIKit terminal. Requires iOS 17 or later. The Android app's final behavior is the reference; see [the commit-by-commit port log](docs/parity.md).
 
-In Settings → List / PR board, **Group by computer** switches between separate computer sections and a combined recency view. The choice applies to both views and is saved on this device. The combined view keeps computer names on session rows. Computer names use the same saved friendly names and colors across clients. Recaps share one blue color.
+Each screen has its own **View** button. On the List and the PR board it ends the filter bar, after three chips: the activity window, live or ended sessions, and the computer. The View panel repeats those three filters, then draws every other choice: how sessions are grouped, what a row shows, and its size and spacing. A sample row, drawn by the real row view, follows each change. On a session, View holds the terminal text, long lines, the terminal's height, the details drawer and the stats strip. A panel opens as a popover on an iPad and as a sheet on an iPhone.
+
+**Group by** offers One list, Computer, Project, or Computer, then project on the List. The PR board offers One list or Computer, because it always groups by time band and repository. Grouping by computer applies to both views and is saved on this device. One list keeps computer names on session rows. Computer names use the same saved friendly names and colors across clients. Recaps share one blue color.
+
+The List and the PR board each keep their own set of row items: recap, times, last prompt and completion, tools, compactions, context, git status and changes. The session's stats strip keeps a third set. Until a set is first changed, it follows the older Show recaps and Visible stats choices. Context starts on in a List row or the stats strip only if its older switch was on, or if every other stat there was on; on a PR board row it starts off. A fresh install hides Tools and Compactions, so context starts off everywhere. Turning it on or off saves the set, and the choice sticks.
+
+The person button opens **Account**: notifications, voice transcripts, sign-in, pairing another device, MCP, and this device. The + button starts a session or watches a pull request. On an iPad with a session selected, a header button expands the board to full width or returns to the session.
 
 ## Build and run
 
@@ -21,7 +27,7 @@ Run `crabigator pair` on a paired computer, then enter its code in the app. The 
 **Try a demo** on the pairing screen opens an offline walkthrough with sample
 sessions, a PR board, a question, and local sample messages. It neither changes
 pairing credentials nor sends demo messages to a server. Privacy information is
-linked from pairing and Settings at <https://drinkcrabigator.com/privacy>.
+linked from pairing and Account at <https://drinkcrabigator.com/privacy>.
 
 All three shipping targets include a privacy manifest declaring app preferences,
 shared app-group preferences, and elapsed-time measurement. Archive the
@@ -43,7 +49,7 @@ The Worker requires migration `0023_apple_push.sql` and an `APNS_CREDENTIALS` se
 
 Store the secret through Wrangler's secret input; never put it in this repository. Deploy using the repository's official deployment instructions after reviewing the prepared changes. Migration 0023 preserves existing Android registrations. Tests cover independence between Apple and Firebase provider failures.
 
-The device registers its token, signing environment, and sound preference after pairing. Enable notifications in Settings → Notifications. Sound defaults to off. The notification service extension loads the current prompt using the shared Keychain credential. Choices and free-text replies carry the displayed prompt revision; changed or disconnected prompts cannot receive stale answers. Ambiguous input failures are never retried by the app.
+The device registers its token, signing environment, and sound preference after pairing. Enable notifications in Account → Notifications. Sound defaults to off. The notification service extension loads the current prompt using the shared Keychain credential. Choices and free-text replies carry the displayed prompt revision; changed or disconnected prompts cannot receive stale answers. Ambiguous input failures are never retried by the app.
 
 A question notification shows the question, then every choice on one line. Long-pressing it opens the content extension, which lists every question with its choices and their descriptions. Each choice is a button there; multi-select questions get checkboxes and a Submit button. Answers from that view use the same revision check as the app, and a locked device opens the session instead of answering. The expanded card hides the system action buttons, so each choice appears once. If the custom view cannot load, the system actions remain available as a fallback. A notification without choice buttons, such as a multi-select question, gets an Open session button, because iOS only expands a notification that has a regular button.
 
@@ -63,7 +69,16 @@ xcodebuild -project clients/ios/Crabigator.xcodeproj -scheme Crabigator \
   -derivedDataPath clients/ios/build -only-testing:CrabigatorTests test
 ```
 
-The live UI check is opt-in and requires an already paired simulator with a session containing scrollback. It opens List, PR board, a live terminal and Style, verifies read-only terminal taps and follow-output, and returns to the board. On tablets it checks that changing modes preserves the sidebar. It does not send input to a session.
+The filter bar, the View panels, Account and the + menu have their own UI tests on a sample roster, with no pairing. They run on an iPhone or an iPad simulator and keep a screenshot of each screen in the result bundle:
+
+```sh
+xcodebuild -project clients/ios/Crabigator.xcodeproj -scheme Crabigator \
+  -destination 'platform=iOS Simulator,id=DEVICE' \
+  -derivedDataPath clients/ios/build -only-testing:CrabigatorUITests/ViewPanelTests \
+  -resultBundlePath /tmp/crabigator-view-panels.xcresult test
+```
+
+The live UI check is opt-in and requires an already paired simulator with a session containing scrollback. It opens List, PR board, a live terminal and the session's View panel, verifies read-only terminal taps and follow-output, and returns to the board. On tablets it checks that changing modes preserves the sidebar. It does not send input to a session.
 
 ```sh
 TEST_RUNNER_CRABIGATOR_TEST_SESSION_ID=SESSION_ID TEST_RUNNER_CRABIGATOR_LIVE_UI_TESTS=1 xcodebuild \

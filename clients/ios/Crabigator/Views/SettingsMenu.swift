@@ -2,135 +2,117 @@ import SwiftUI
 
 extension View {
     func nativePopover() -> some View { self.frame(idealWidth: 330, maxWidth: 330, idealHeight: 480, maxHeight: 480).presentationCompactAdaptation(.popover).preferredColorScheme(.dark) }
+    /// A View panel or Account: a popover beside its button on a tablet, and on a phone a
+    /// sheet that can leave the screen it changes in view.
+    func panelPresentation(tall: Bool = false) -> some View { modifier(PanelPresentation(detent: tall ? .large : .fraction(0.8), detents: tall ? [.medium, .large] : [.medium, .fraction(0.8)], ground: tall ? Crab.ink : Crab.panel)) }
 }
-struct StyleMenu: View {
-    @ObservedObject var model: SessionModel
-    var standalone = true
-    /// Set when the menu opens from a session, to reach that session's voice transcripts.
-    var sessionID: String?
-    @State private var terminal = false
-    var body: some View {
-        Group {
-            if standalone { NavigationStack { form } } else { form }
-        }.tint(Crab.cyan)
+private struct PanelPresentation: ViewModifier {
+    @State var detent: PresentationDetent
+    var detents: Set<PresentationDetent>
+    var ground: Color
+    func body(content: Content) -> some View {
+        content.frame(idealWidth: 400, idealHeight: 860)
+            .presentationDetents(detents, selection: $detent).presentationDragIndicator(.visible).presentationContentInteraction(.scrolls)
+            .presentationBackground(ground).presentationCornerRadius(22).preferredColorScheme(.dark)
     }
-    var form: some View {
-        VStack(spacing: 0) {
-            Picker("Style applies to", selection: $terminal) {
-                Text("List / PR board").tag(false)
-                Text("Terminal").tag(true)
-            }.pickerStyle(.segmented).padding(.horizontal, 16).padding(.vertical, 10).accessibilityIdentifier("Style scope")
-            Form {
-                if let sessionID { Section { NavigationLink("Voice transcripts") { VoiceTranscripts(model: model, sessionID: sessionID) } } }
-                if terminal {
-                    Section("Text") {
-                        Stepper("Text size: \(model.preferences.fontSize) pt", value: $model.preferences.fontSize, in: 9...24).accessibilityIdentifier("Terminal text size")
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Line spacing")
-                            Picker("Line spacing", selection: $model.preferences.lineSpacing) { Text("Tight").tag(120); Text("Normal").tag(145); Text("Relaxed").tag(170) }.pickerStyle(.segmented).accessibilityIdentifier("Terminal line spacing")
-                        }
-                        Picker("Text wrap", selection: $model.preferences.wrap) { Text("Wrap").tag(true); Text("Horizontal scroll").tag(false) }.pickerStyle(.menu)
-                    }
-                    Section("Layout") {
-                        Picker("Terminal height", selection: $model.preferences.terminalHeight) { Text("Full").tag(0); ForEach([250, 350, 500, 700], id: \.self) { Text("\($0)").tag($0) } }.pickerStyle(.menu)
-                    }
-                    Section("Widgets below the terminal") {
-                        Toggle("Expanded", isOn: $model.preferences.widgets)
-                        visibility([("recap", "Recap"), ("prs", "Pull requests"), ("commits", "Commits"), ("git", "Git status"), ("changes", "Changes"), ("flow", "Flow scene")])
-                    }
-                } else {
-                    Section("Text and spacing") {
-                        Stepper("Text size: \(model.preferences.boardTextSize) pt", value: $model.preferences.boardTextSize, in: 10...24).accessibilityIdentifier("Board text size")
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Row spacing")
-                            Picker("Row spacing", selection: $model.preferences.density) { Text("Tight").tag("compact"); Text("Normal").tag("comfortable"); Text("Relaxed").tag("relaxed") }.pickerStyle(.segmented).accessibilityIdentifier("Board spacing")
-                            Text("Tight keeps titles on one line.").font(.caption).foregroundStyle(Crab.muted)
-                        }
-                    }
-                    Section("Layout") {
-                        Picker("List columns", selection: $model.preferences.columns) { Text("Fit").tag(0); ForEach(1...4, id: \.self) { Text("\($0)").tag($0) } }.pickerStyle(.menu)
-                        Picker("Projects", selection: $model.preferences.grouping) { Text("Together").tag("all"); Text("Grouped").tag("project") }.pickerStyle(.menu)
-                        if model.preferences.grouping == "project" { Picker("Project order", selection: $model.preferences.order) { Text("Most recent").tag("recent"); Text("Alphabetical").tag("alpha") }.pickerStyle(.menu) }
-                    }
-                }
-            }.id(terminal)
-        }.navigationTitle("Style").navigationBarTitleDisplayMode(.inline).onAppear { terminal = standalone }
-    }
-    func visibility(_ keys: [(String, String)]) -> some View { ForEach(keys, id: \.0) { key, label in Toggle(label, isOn: Binding(get: { model.preferences.visible(key) }, set: { _ in model.preferences.toggle(key) })) } }
 }
-struct SettingsMenu: View {
+/// The account, its devices and its alerts. Nothing here changes how a screen looks.
+struct AccountScreen: View {
     @ObservedObject var model: SessionModel
-    var search: () -> Void = {}
-    var fullscreen: (() -> Void)?
-    var expanded = false
+    @Environment(\.dismiss) private var dismiss
     @State private var identities: [JSON] = []
     @State private var accountLoaded = false
+    @State private var notifications = ""
     @State private var invite = ""
     @State private var error = ""
     @State private var busy = false
     @State private var confirm = false
-    @Environment(\.openURL) private var openURL
+    private var sample: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["CRABIGATOR_TEST_LAYOUT"] == "1"
+        #else
+        return false
+        #endif
+    }
     var body: some View {
         NavigationStack {
-            Form {
-                Section("List / PR board") {
-                    Picker("Activity", selection: $model.preferences.boardAgeHours) {
-                        ForEach([1, 3, 6, 9, 12, 24], id: \.self) { Text($0 == 1 ? "Last hour" : "Last \($0) hours").tag($0) }
-                        Text("All ages").tag(0)
-                    }.pickerStyle(.menu).accessibilityIdentifier("Activity cutoff")
-                    Picker("Sessions", selection: $model.preferences.showEnded) {
-                        Text("Live").tag(false); Text("Live and ended").tag(true)
-                    }.pickerStyle(.menu)
-                    Picker("Computers", selection: $model.preferences.boardComputer) {
-                        Text("All computers").tag("")
-                        ForEach(Array(Set(model.ordering.machines + [model.preferences.boardComputer])).filter { !$0.isEmpty }.sorted(), id: \.self) { Text($0).tag($0) }
-                    }.pickerStyle(.menu)
-                    Toggle("Group by computer", isOn: $model.preferences.groupByComputer)
-                    Toggle("Show recaps", isOn: $model.preferences.boardRecaps)
-                    Picker("PR board groups", selection: $model.preferences.boardGrouping) {
-                        Text("Sessions").tag("sessions"); Text("Pull requests").tag("prs")
-                    }.pickerStyle(.menu)
-                }
-                Section("Actions") {
-                    Button("Search sessions", action: search)
-                    NavigationLink("New session") { BoardActionForm(model: model, watch: false) }
-                    NavigationLink("Watch PR") { BoardActionForm(model: model, watch: true) }
-                    if let fullscreen { Button(expanded ? "Return to session" : "Expand List / PR board", action: fullscreen) }
-                }
-                Section {
-                    NavigationLink("Style") { StyleMenu(model: model, standalone: false) }
-                    NavigationLink("Notifications") { NotificationSettings() }
-                    NavigationLink("Voice transcripts") { VoiceTranscripts(model: model) }
-                }
-                Section("Session list") {
-                    Picker("Position", selection: $model.preferences.sidebarRight) { Text("Left").tag(false); Text("Right").tag(true) }.pickerStyle(.segmented)
-                }
-                Section("Visible stats") { StyleMenu(model: model).visibility([("sessionTime", "Session time"), ("thinkingTime", "Thinking time"), ("promptRecency", "Last prompt"), ("completionRecency", "Last completion"), ("tools", "Tools"), ("compactions", "Compactions"), ("context", "Context")]) }
-                Section("Sign-in") {
-                    if !accountLoaded { ProgressView() }
-                    else if identities.isEmpty { Text("Pairing code") }
-                    ForEach(identities.indices, id: \.self) { i in Text(identities[i].text("email", identities[i].text("name", identities[i].text("provider")))) }
-                    Link("Manage sign-in", destination: URL(string: model.origin + "/dashboard")!)
-                }
-                Section("Pair another device") {
-                    if !invite.isEmpty { Text(invite).font(.title2.monospaced()).textSelection(.enabled).foregroundStyle(Crab.cyan) }
-                    Button(busy ? "Generating…" : "Generate pairing code") {
-                        busy = true
-                        Task { defer { busy = false }; do { invite = try await model.api.call("/api/pairing/invite", body: [:]).text("code") } catch { self.error = error.localizedDescription } }
-                    }.disabled(busy)
-                }
-                Section("MCP") { Text(model.origin + "/mcp").font(.caption).textSelection(.enabled); Link("Tools and examples", destination: URL(string: model.origin + "/mcp-tools")!) }
-                Section("Privacy") { Link("Privacy policy", destination: URL(string: "https://drinkcrabigator.com/privacy")!) }
-                Section("This device") {
-                    Text(UIDevice.current.name); Text(model.origin).font(.caption).foregroundStyle(Crab.muted)
-                    Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")").font(.caption)
-                    Button("Unpair this device", role: .destructive) { confirm = true }
-                }
-                if !error.isEmpty { Text(error).foregroundStyle(Crab.red) }
-            }.accessibilityIdentifier("Settings form").navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
+            VStack(spacing: 0) {
+            PanelHeader(title: "Account", size: 20) { dismiss() }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    group("Alerts and history") {
+                        NavigationLink { NotificationSettings() } label: { row { Text("Notifications"); Spacer(); Text(notificationSummary.text).font(.system(size: 14)).foregroundStyle(notificationSummary.color).lineLimit(1); chevron } }.buttonStyle(.plain).accessibilityIdentifier("Notifications")
+                        divider
+                        NavigationLink { VoiceTranscripts(model: model) } label: { row { Text("Voice transcripts"); Spacer(); chevron } }.buttonStyle(.plain).accessibilityIdentifier("Voice transcripts")
+                    }
+                    group("Sign-in") {
+                        if !accountLoaded { row { ProgressView() } }
+                        else if identities.isEmpty { row { Text("Pairing code") } }
+                        ForEach(identities.indices, id: \.self) { index in row { Text(Self.identity(identities[index])).lineLimit(2) } }
+                        divider
+                        link("Manage sign-in on the web", model.origin + "/dashboard")
+                    }
+                    group("Devices and agents") {
+                        Button {
+                            busy = true
+                            Task { defer { busy = false }; do { invite = try await model.api.call("/api/pairing/invite", body: [:]).text("code") } catch { self.error = error.localizedDescription } }
+                        } label: { row { Text(busy ? "Generating…" : "Pair another device").foregroundStyle(Crab.cyan) } }.buttonStyle(.plain).disabled(busy)
+                        if !invite.isEmpty { Text(invite).font(.title2.monospaced()).textSelection(.enabled).foregroundStyle(Crab.cyan).padding(.bottom, 12).accessibilityIdentifier("Pairing code for another device") }
+                        divider
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Connect an agent with MCP")
+                            Text(model.origin + "/mcp").font(.system(size: 13, design: .monospaced)).foregroundStyle(Crab.soft).textSelection(.enabled)
+                            Link(destination: URL(string: model.origin + "/mcp-tools")!) { Text("Tools and examples").font(.system(size: 14)).foregroundStyle(Crab.cyan).frame(maxWidth: .infinity, minHeight: panelTouch, alignment: .leading).contentShape(Rectangle()) }
+                        }.padding(.top, 10)
+                    }
+                    group("This device") {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(UIDevice.current.name)
+                            Text("\(URL(string: model.origin)?.host ?? model.origin) · Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")").font(.system(size: 13)).foregroundStyle(Crab.dim)
+                        }.padding(.vertical, 10)
+                        divider
+                        link("Privacy policy", "https://drinkcrabigator.com/privacy")
+                        divider
+                        Button { confirm = true } label: { row { Text("Unpair this device").foregroundStyle(Crab.red) } }.buttonStyle(.plain)
+                    }
+                    if !error.isEmpty { Text(error).font(.system(size: 13)).foregroundStyle(Crab.red) }
+                    PanelNote("Nothing here changes how a screen looks. Search, New session and Watch PR stay on the board's own buttons.")
+                }.font(.system(size: 15)).padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 24)
+            }.accessibilityIdentifier("Account screen")
+            // Runs again on the way back from the Notifications page, where the status can change.
+            }.task { notifications = await Notifications.shared.status() }.background(Crab.ink).foregroundStyle(Crab.text)
+                .navigationTitle("Account").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .navigationBar)
                 .confirmationDialog("Unpair this device?", isPresented: $confirm, titleVisibility: .visible) { Button("Unpair", role: .destructive) { Task { await model.unpair() } } }
         }.tint(Crab.cyan).task {
-            do { identities = try await model.api.call("/api/account").array("identities") } catch { self.error = error.localizedDescription }; accountLoaded = true
+            if sample { identities = [["name": "Sample account", "provider": "github"]] }
+            else { do { identities = try await model.api.call("/api/account").array("identities") } catch { self.error = error.localizedDescription } }
+            accountLoaded = true
+        }
+    }
+    /// "On, silent" in the design's words, from the notifications page's own status.
+    private var notificationSummary: (text: String, color: Color) {
+        if notifications == "Notifications on" { return (Credentials.defaults.bool(forKey: "notificationSound") ? "On, with sound" : "On, silent", Crab.mint) }
+        if notifications == "Notifications off" { return ("Off", Crab.dim) }
+        return (notifications, Crab.yellow)
+    }
+    static func identity(_ identity: JSON) -> String {
+        let who = [identity.text("email"), identity.text("name"), identity.text("username")].first { !$0.isEmpty }
+        let provider = ["github": "GitHub", "google": "Google"][identity.text("provider")] ?? identity.text("provider").capitalized
+        return [who, provider.isEmpty ? nil : (who == nil ? provider : "with " + provider)].compactMap { $0 }.joined(separator: " ")
+    }
+    private var chevron: some View { Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Crab.dim).accessibilityHidden(true) }
+    private var divider: some View { Crab.line.frame(height: 1) }
+    private func row<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 8) { content() }.frame(maxWidth: .infinity, minHeight: 52, alignment: .leading).contentShape(Rectangle())
+    }
+    private func link(_ title: String, _ address: String) -> some View {
+        Link(destination: URL(string: address)!) { row { Text(title).foregroundStyle(Crab.cyan) } }
+    }
+    private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Crab.dim).accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: 0) { content() }.padding(.horizontal, 14).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Crab.panel, in: RoundedRectangle(cornerRadius: 14)).overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(Crab.line) }
         }
     }
 }
@@ -206,6 +188,27 @@ struct NewSessionButton: View {
                 NavigationStack {
                     NewSessionForm(model: model)
                         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { presented = false } } }
+                }.nativePopover()
+            }
+    }
+}
+
+/// The board's + button: start a session, or watch a pull request that no session touches.
+struct AddButton: View {
+    enum Choice: String, Identifiable { case session, watch; var id: String { rawValue } }
+    @ObservedObject var model: SessionModel
+    @State private var presented: Choice?
+    var body: some View {
+        Menu {
+            Button("New session") { presented = .session }
+            Button("Watch a pull request") { presented = .watch }
+        } label: {
+            Image(systemName: "plus").font(.system(size: 17, weight: .medium)).frame(width: 44, height: 44).foregroundStyle(presented == nil ? Crab.muted : Crab.orange).background(presented == nil ? .clear : Crab.orange.opacity(0.13), in: RoundedRectangle(cornerRadius: 10))
+        }.accessibilityLabel("New session or watch a pull request").accessibilityIdentifier("Add")
+            .popover(item: $presented, attachmentAnchor: .rect(.bounds), arrowEdge: .top) { choice in
+                NavigationStack {
+                    BoardActionForm(model: model, watch: choice == .watch)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { presented = nil } } }
                 }.nativePopover()
             }
     }

@@ -2,6 +2,24 @@
 
 The updated native app is installed and paired on ClayPad Mini. The October 13 checks below verify its live terminal, board navigation and real APNs delivery. Earlier checks on ClayPad Air, ClayPhone SE 3 and simulators remain recorded below.
 
+## Settings redesign: filter bar, View panels and Account — November 18
+
+Settings and Style are gone. The board has a filter bar (time, sessions, computer) and a View button; the List, the PR board and the session each have a View panel with drawn choices; the person button opens Account; Watch PR is in the + menu; the tablet's Expand and Return action is a header button. Rows can also show context, git status and changes. Three new saved sets (`listRow`, `boardRow`, `sessionStats`) start from the older Show recaps and Visible stats choices. Context starts on in a List row or the stats strip only where its older switch was on or every other stat was; on a PR board row it starts off. That is the owner's final rule, after trying context on everywhere on the iPad.
+
+Checked on the iPhone 17e simulator (iOS 27.2) and the iPad Air 11-inch (M4) simulator (iOS 27.0), with Xcode 27.2:
+
+- All 51 unit tests pass on both. Four are new: the three sets' starting values and saved keys; where context starts (off on a fresh install, on with its older switch or with every other stat on, never on the PR board, and a saved choice sticks); the Group by picker's mapping onto the two older settings; and the new session fields.
+- The whole UI suite passes on both: 38 tests, of which 23 need a paired device and were skipped.
+- `ViewPanelTests` is new and needs no pairing (`CRABIGATOR_TEST_LAYOUT=1` with `CRABIGATOR_TEST_SAMPLE=1`). It checks that a chip and the panel change the same filter; every Group by tile and Sort projects; that each row chip changes the sample row and then the board; that the List and the PR board keep separate sets; that Context starts off in all three panels on a fresh install and stays on once turned on; size, spacing, columns and the tablet's list side; the session panel's controls and the stats strip's own set; Account's rows, the unpair question and the notifications page; the + menu and the Watch PR form; and the tablet's Expand and Return button. It also checks that every control in a panel is at least 44 points on screen.
+- `NavigationTests/testVisibleRowsFollowBoardSettings` now drives the View panel's Recap chip and Group by tiles instead of the old switches, and passes on both.
+- Each screen was compared with the design files from the tests' screenshots, on both simulators.
+
+Two things found on the way are fixed. On the iPad, the mode not on screen (List or PR board) left its rows in the accessibility tree, so a test or VoiceOver could land on a hidden row; the rows are now hidden with their stack, not only their scroll view. An iPhone draws a sheet at about 96% until it is fully raised, which made 44-point controls 42 points on screen; panel controls are 46 points.
+
+The build is installed on ClayPad Air and ClayPhone SE 3. A screenshot from the iPad shows the PR board with the filter chips, the floating toolbar and View, and the saved board choices carried over; one row shows a changes line from live data. An earlier build, with context on everywhere, showed context from live data on those rows, coloured by how full the window is (22% in blue, 85% and 90% in red). A screenshot from the iPhone shows the List with the three chips and View fitting its 375-point width, recaps on as saved, and no context line. Nothing was tapped on either device. On the iPhone Duo simulator's outer display (iOS 27.1), screenshots show the board and the View sheet clear of the camera area.
+
+Not verified: the panels and the git status line against live data, and any control on a device, since none was tapped; VoiceOver by hand; the Duo's inner display, book and tabletop postures (the simulator's posture needs Device Hub); the opt-in live tests in `ReadingTests`, which were updated for the new screens but not run; Account's sign-in list, pairing code and unpairing against a server; the Notifications status on Account after a change on its page (it now reloads on the way back, but the simulator only ever showed Off); and submitting the Watch PR form.
+
 ## Rows follow board settings after regrouping — November 18
 
 Turning Group by computer off left the rows already on screen without their computer names. Those rows then ignored Show recaps as well. The lazy stack matched each row by session ID alone, so a row that moved to another section kept its old view. Rows are now identified by section and session.

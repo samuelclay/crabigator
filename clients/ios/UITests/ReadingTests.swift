@@ -173,7 +173,7 @@ final class ReadingTests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeRight
         let app = XCUIApplication()
         app.launch()
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 25))
+        XCTAssertTrue(app.buttons["Account"].waitForExistence(timeout: 25))
         for name in ["List", "PR board"] {
             let mode = app.buttons[name]
             if !(mode.value as? String ?? "").hasPrefix("Selected") { tapCenter(mode, in: app) }
@@ -183,12 +183,16 @@ final class ReadingTests: XCTestCase {
             let first = try XCTUnwrap(rows.allElementsBoundByIndex.first { $0.isHittable })
             let row = app.buttons[first.identifier]
             let search = app.buttons["Search"], logo = app.images["Crabigator"]
-            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: (logo.frame.maxX + search.frame.minX) / 2, dy: search.frame.midY)).tap()
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: (logo.frame.maxX + firstHeaderControl(in: app).frame.minX) / 2, dy: search.frame.midY)).tap()
             XCTAssertTrue(row.exists, "A tap between header controls must not collapse the device")
-            tapCenter(app.buttons["Settings"], in: app)
-            XCTAssertTrue(app.buttons["Activity cutoff"].waitForExistence(timeout: 5))
-            capture("Settings from floating \(name) header")
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.9)).tap()
+            tapCenter(app.buttons["Account"], in: app)
+            XCTAssertTrue(app.scrollViews["Account screen"].waitForExistence(timeout: 5))
+            capture("Account from floating \(name) header")
+            app.buttons["Done"].tap()
+            tapCenter(app.buttons["Board view"], in: app)
+            XCTAssertTrue(app.staticTexts["View " + name].waitForExistence(timeout: 5))
+            capture("View from the filters beside the floating \(name) header")
+            app.buttons["Done"].tap()
         }
     }
 
@@ -199,32 +203,32 @@ final class ReadingTests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launch()
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 25))
+        XCTAssertTrue(app.buttons["Board view"].waitForExistence(timeout: 25))
         let appBounds = app.frame
         if let id = ProcessInfo.processInfo.environment["CRABIGATOR_TEST_SESSION_ID"] {
             let quietSession = app.buttons["Session " + id]
             if quietSession.isHittable { quietSession.tap() }
         }
-        func openStyle() {
-            app.buttons["Settings"].tap()
-            let style = app.buttons["Style"].firstMatch
-            revealInSettings(style, in: app)
-            tapCenter(style, in: app)
+        let spacings = ["Tight", "Normal", "Relaxed"]
+        func rowSpacing(_ name: String) -> XCUIElement { app.buttons["Row spacing " + name] }
+        func openView() {
+            app.buttons["Board view"].tap()
+            reveal(rowSpacing("Tight"), in: app.scrollViews["View panel"], app)
         }
-        func dismissStyle() { app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.9)).tap() }
-        openStyle()
-        let spacing = app.segmentedControls["Board spacing"]
-        let original = spacing.buttons.allElementsBoundByIndex.first { $0.isSelected }?.label ?? "Normal"
-        let scope = app.segmentedControls["Style scope"]
-        XCTAssertTrue(scope.buttons["List / PR board"].isSelected)
-        XCTAssertFalse(app.segmentedControls["Terminal line spacing"].exists)
-        capture("List and PR board style controls")
-        scope.buttons["Terminal"].tap()
-        XCTAssertFalse(spacing.exists)
-        capture("Terminal style controls")
-        let terminal = app.segmentedControls["Terminal line spacing"].buttons.allElementsBoundByIndex.first { $0.isSelected }?.label
-        XCTAssertNotNil(terminal)
-        dismissStyle()
+        func closePanel() { app.buttons["Done"].tap(); Thread.sleep(forTimeInterval: 0.6) }
+        func chooseRowSpacing(_ name: String) { openView(); rowSpacing(name).tap(); XCTAssertTrue(rowSpacing(name).isSelected); closePanel() }
+        // The session's View panel holds the terminal's line spacing, which row spacing must leave alone.
+        func lineSpacing() -> String? {
+            app.buttons["Session view"].tap()
+            XCTAssertTrue(app.staticTexts["View Session"].waitForExistence(timeout: 5))
+            defer { closePanel() }
+            return spacings.first { app.buttons["Line spacing " + $0].isSelected }
+        }
+        openView()
+        let original = spacings.first { rowSpacing($0).isSelected } ?? "Normal"
+        XCTAssertFalse(app.buttons["Line spacing Normal"].exists, "The board's View has no terminal controls")
+        capture("List and PR board View controls")
+        closePanel()
         for name in ["List", "PR board"] {
             let mode = app.buttons[name]
             if !(mode.value as? String ?? "").hasPrefix("Selected") { mode.tap() }
@@ -238,13 +242,16 @@ final class ReadingTests: XCTestCase {
             let before = machine.label
             let logo = app.images["Crabigator"]
             if logo.exists {
-                app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: (logo.frame.maxX + search.frame.minX) / 2, dy: search.frame.midY)).tap()
+                app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: (logo.frame.maxX + firstHeaderControl(in: app).frame.minX) / 2, dy: search.frame.midY)).tap()
                 XCTAssertEqual(machine.label, before)
             }
             let centered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in abs(search.frame.midX - appBounds.midX) < 100 }, object: search)
             XCTAssertEqual(XCTWaiter.wait(for: [centered], timeout: 20), .completed)
             XCTAssertLessThan(search.frame.minY, appBounds.minY + 90)
             XCTAssertLessThan(abs(search.frame.midX - appBounds.midX), 100)
+            // Full width, the filters share the floating toolbar's row.
+            XCTAssertLessThan(abs(app.buttons["Board view"].frame.midY - search.frame.midY), 12)
+            XCTAssertLessThan(abs(app.buttons["Time filter"].frame.midY - search.frame.midY), 12)
             let tappable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in search.isHittable }, object: search)
             XCTAssertEqual(XCTWaiter.wait(for: [tappable], timeout: 15), .completed)
             search.tap()
@@ -259,28 +266,26 @@ final class ReadingTests: XCTestCase {
             XCTAssertEqual(mode.value as? String, "Selected, sidebar")
             let sidebar = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in search.frame.maxX <= appBounds.minX + 360 }, object: search)
             XCTAssertEqual(XCTWaiter.wait(for: [sidebar], timeout: 20), .completed)
-            openStyle(); spacing.buttons["Normal"].tap(); dismissStyle()
+            XCTAssertGreaterThan(app.buttons["Board view"].frame.minY, search.frame.maxY - 1, "Beside a session, the filters sit under the header")
+            let terminal = lineSpacing()
+            XCTAssertNotNil(terminal)
+            chooseRowSpacing("Normal")
             let normalHeight = row.frame.height
-            openStyle(); spacing.buttons["Tight"].tap()
-            scope.buttons["Terminal"].tap()
-            XCTAssertEqual(app.segmentedControls["Terminal line spacing"].buttons.allElementsBoundByIndex.first { $0.isSelected }?.label, terminal)
-            dismissStyle()
+            chooseRowSpacing("Tight")
+            XCTAssertEqual(lineSpacing(), terminal)
             XCTAssertLessThan(row.frame.height, normalHeight)
             capture("Tight \(name) sidebar")
-            if name == "List" {
-                app.buttons["Style"].tap()
-                XCTAssertTrue(scope.buttons["Terminal"].isSelected)
-                dismissStyle()
-            }
-            mode.tap()
+            // The header button returns to the full-width board, as the mode control does.
+            app.buttons["Expand List / PR board"].tap()
+            XCTAssertTrue(app.buttons["Return to session"].waitForExistence(timeout: 5))
             capture("Floating toolbar above tight \(name)")
         }
         app.terminate(); app.launch()
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 25))
-        openStyle()
-        XCTAssertTrue(spacing.buttons["Tight"].isSelected)
-        spacing.buttons[original].tap()
-        dismissStyle()
+        XCTAssertTrue(app.buttons["Board view"].waitForExistence(timeout: 25))
+        openView()
+        XCTAssertTrue(rowSpacing("Tight").isSelected)
+        rowSpacing(original).tap()
+        closePanel()
     }
 
     func testPRBoardRowsFitAfterSelectingFromFullscreen() throws {
@@ -374,8 +379,8 @@ final class ReadingTests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launch()
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 25))
-        app.buttons["Settings"].tap()
+        XCTAssertTrue(app.buttons["Account"].waitForExistence(timeout: 25))
+        app.buttons["Account"].tap()
         app.buttons["Notifications"].tap()
         app.buttons["Enable notifications"].tap()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -531,11 +536,10 @@ final class ReadingTests: XCTestCase {
         capture("Reading scrollback")
         app.buttons["Follow latest output"].tap()
         XCTAssertTrue(app.buttons["Stop following output"].waitForExistence(timeout: 5))
-        app.buttons["Style"].tap()
-        XCTAssertTrue(app.steppers.firstMatch.waitForExistence(timeout: 5))
-        capture("Style menu")
-        // Close a native popover by tapping its source again.
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.6)).tap()
+        app.buttons["Session view"].tap()
+        XCTAssertTrue(app.staticTexts["Terminal text size"].waitForExistence(timeout: 5))
+        capture("Session View panel")
+        app.buttons["Done"].tap()
         app.buttons["Terminal keys"].tap()
         XCTAssertTrue(app.buttons["QWERTY"].waitForExistence(timeout: 5))
         app.buttons["QWERTY"].tap()
@@ -562,36 +566,47 @@ final class ReadingTests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launch()
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 20))
-        app.buttons["Settings"].tap()
-        app.buttons["Style"].tap()
-        let board = app.steppers["Board text size"], terminal = app.steppers["Terminal text size"]
-        XCTAssertTrue(board.waitForExistence(timeout: 5))
-        let scope = app.segmentedControls["Style scope"]
+        XCTAssertTrue(app.buttons["Board view"].waitForExistence(timeout: 20))
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Session "))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 25))
+        let board = app.staticTexts["Board text size"]
+        func openBoardSizes() { app.buttons["Board view"].tap(); reveal(app.buttons["Larger text"], in: app.scrollViews["View panel"], app) }
+        func closePanel() { app.buttons["Done"].tap(); Thread.sleep(forTimeInterval: 0.6) }
+        // The terminal's size lives in the session's own View panel.
+        func terminalSize() throws -> String {
+            try XCTUnwrap(rows.allElementsBoundByIndex.first { $0.isHittable }).tap()
+            XCTAssertTrue(app.buttons["Session view"].waitForExistence(timeout: 5))
+            app.buttons["Session view"].tap()
+            let size = app.staticTexts["Terminal text size"]
+            XCTAssertTrue(size.waitForExistence(timeout: 5))
+            let label = size.label
+            closePanel()
+            (app.buttons["Back to list"].exists ? app.buttons["Back to list"] : app.buttons["Close session"]).tap()
+            XCTAssertTrue(app.buttons["Board view"].waitForExistence(timeout: 5))
+            return label
+        }
+        let oldTerminal = try terminalSize()
+        openBoardSizes()
         let oldBoard = board.label
-        scope.buttons["Terminal"].tap()
-        let oldTerminal = terminal.label
-        scope.buttons["List / PR board"].tap()
-        for _ in 0..<4 { board.buttons["Board text size-Increment"].tap() }
+        for _ in 0..<4 { app.buttons["Larger text"].tap() }
         let largerBoard = board.label
         XCTAssertNotEqual(largerBoard, oldBoard)
-        scope.buttons["Terminal"].tap()
-        XCTAssertEqual(terminal.label, oldTerminal)
-        capture("Independent text size controls")
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.7)).tap()
+        capture("Larger board text in View")
+        closePanel()
+        XCTAssertEqual(try terminalSize(), oldTerminal)
         capture("Larger list text")
         app.buttons["PR board"].tap()
         capture("Larger PR board text")
         app.terminate(); app.launch()
-        app.buttons["Settings"].tap(); app.buttons["Style"].tap()
+        XCTAssertTrue(app.buttons["Board view"].waitForExistence(timeout: 20))
+        openBoardSizes()
         XCTAssertEqual(board.label, largerBoard)
-        scope.buttons["Terminal"].tap()
-        XCTAssertEqual(terminal.label, oldTerminal)
-        scope.buttons["List / PR board"].tap()
-        for _ in 0..<4 { board.buttons["Board text size-Decrement"].tap() }
+        for _ in 0..<4 { app.buttons["Smaller text"].tap() }
         XCTAssertEqual(board.label, oldBoard)
+        closePanel()
+        XCTAssertEqual(try terminalSize(), oldTerminal)
     }
-    func testBoardSettingsAndActionForms() throws {
+    func testBoardFiltersAndActionForms() throws {
         guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
             throw XCTSkip("Requires an already paired tablet.")
         }
@@ -599,34 +614,32 @@ final class ReadingTests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeRight
         let app = XCUIApplication()
         app.launch()
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 25))
-        capture("Board before settings")
-        tapCenter(app.buttons["Settings"], in: app)
-        let cutoff = app.buttons["Activity cutoff"]
-        XCTAssertTrue(cutoff.waitForExistence(timeout: 5))
-        tapCenter(cutoff, in: app, horizontal: 0.85)
+        let time = app.buttons["Time filter"]
+        XCTAssertTrue(time.waitForExistence(timeout: 25))
+        capture("Board before filters")
+        tapCenter(time, in: app)
         capture("Activity choices")
         let hour = app.buttons["Last hour"]
         XCTAssertTrue(hour.waitForExistence(timeout: 5))
         tapCenter(hour, in: app)
+        let narrowed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "1h"), object: time)
+        XCTAssertEqual(XCTWaiter.wait(for: [narrowed], timeout: 5), .completed)
         capture("Board activity cutoff")
         app.terminate(); app.launch()
-        capture("Board before settings")
-        tapCenter(app.buttons["Settings"], in: app)
-        XCTAssertTrue(cutoff.waitForExistence(timeout: 5))
-        XCTAssertTrue(cutoff.label.contains("Last hour") || (cutoff.value as? String) == "Last hour")
-        tapCenter(cutoff, in: app, horizontal: 0.85)
+        XCTAssertTrue(time.waitForExistence(timeout: 25))
+        XCTAssertEqual(time.label, "1h", "The activity window is saved")
+        tapCenter(time, in: app)
         let day = app.buttons["Last 24 hours"]
         XCTAssertTrue(day.waitForExistence(timeout: 5))
         tapCenter(day, in: app)
         // Native menus can open upward after relaunch; retry if the first tap only dismisses it.
-        if !cutoff.label.contains("Last 24 hours") {
-            tapCenter(cutoff, in: app, horizontal: 0.85); tapCenter(day, in: app)
+        if time.label != "24h" {
+            tapCenter(time, in: app); tapCenter(day, in: app)
         }
-        XCTAssertTrue(cutoff.label.contains("Last 24 hours"))
-        func reveal(_ button: XCUIElement) { revealInSettings(button, in: app) }
-        let watch = app.buttons["Watch PR"]
-        reveal(watch)
+        XCTAssertEqual(time.label, "24h")
+        tapCenter(app.buttons["Add"], in: app)
+        let watch = app.buttons["Watch a pull request"]
+        XCTAssertTrue(watch.waitForExistence(timeout: 5))
         tapCenter(watch, in: app)
         let target = app.textFields["Watch PR target"]
         XCTAssertTrue(target.waitForExistence(timeout: 5))
@@ -635,11 +648,11 @@ final class ReadingTests: XCTestCase {
         XCTAssertTrue(app.buttons["Watch PR"].isEnabled)
         capture("Watch PR form")
         app.terminate(); app.launch()
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
-        capture("Board before settings")
-        tapCenter(app.buttons["Settings"], in: app)
-        let newSession = app.descendants(matching: .any).matching(identifier: "Settings form").firstMatch.buttons["New session"]
-        reveal(newSession)
+        XCTAssertTrue(app.buttons["Add"].waitForExistence(timeout: 15))
+        capture("Board before the + menu")
+        tapCenter(app.buttons["Add"], in: app)
+        let newSession = app.buttons["New session"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 5))
         tapCenter(newSession, in: app)
         XCTAssertTrue(app.buttons["New session project"].waitForExistence(timeout: 5))
         app.buttons["New session project"].tap()
@@ -647,20 +660,23 @@ final class ReadingTests: XCTestCase {
         XCTAssertTrue(app.textFields["Folder"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Start session"].exists)
         capture("New session desktop and folder")
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.9)).tap()
+        app.buttons["Done"].tap()
     }
-    private func revealInSettings(_ button: XCUIElement, in app: XCUIApplication) {
-        let form = app.descendants(matching: .any).matching(identifier: "Settings form").firstMatch
-        XCTAssertTrue(form.waitForExistence(timeout: 5))
-        for _ in 0..<6 {
-            let frame = form.frame
-            let top = frame.minY + 90, bottom = frame.maxY - 40
-            if button.exists && button.frame.midY > top && button.frame.midY < bottom { return }
-            let down = button.exists && button.frame.midY <= top
-            let origin = app.coordinate(withNormalizedOffset: .zero)
-            let from = origin.withOffset(CGVector(dx: frame.midX, dy: frame.minY + frame.height * (down ? 0.4 : 0.7)))
-            let to = origin.withOffset(CGVector(dx: frame.midX, dy: frame.minY + frame.height * (down ? 0.7 : 0.4)))
-            from.press(forDuration: 0.05, thenDragTo: to)
+    /// The first button after the crab mark: the tablet's Expand or Return button while a
+    /// session is selected, otherwise the + menu.
+    private func firstHeaderControl(in app: XCUIApplication) -> XCUIElement {
+        ["Return to session", "Expand List / PR board", "Add"].map { app.buttons[$0] }.first { $0.exists } ?? app.buttons["Search"]
+    }
+    /// Scrolls a View panel until the control is on screen inside it.
+    private func reveal(_ control: XCUIElement, in panel: XCUIElement, _ app: XCUIApplication) {
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        for _ in 0..<8 {
+            let frame = panel.frame
+            if control.exists && control.isHittable && control.frame.minY >= frame.minY && control.frame.maxY <= frame.maxY - 24 { return }
+            let below = !control.exists || control.frame.midY > frame.midY
+            let from = panel.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: below ? 0.7 : 0.35))
+            let to = panel.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: below ? 0.35 : 0.7))
+            from.press(forDuration: 0.05, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 0.3)
         }
     }
     private func tapCenter(_ element: XCUIElement, in app: XCUIApplication, horizontal: CGFloat = 0.5) {

@@ -88,6 +88,118 @@ final class CrabigatorTests: XCTestCase {
         XCTAssertFalse(older.visible("context"))
     }
 
+    func testContextStartsOnlyWhereTheOlderSwitchesAskForIt() throws {
+        func reload(_ prefs: Preferences) throws -> Preferences { try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(prefs)) }
+        // A fresh install hides Tools and Compactions, so context starts off everywhere.
+        var prefs = Preferences()
+        for set in Preferences.Shown.allCases { XCTAssertFalse(prefs.shows("context", in: set), "\(set)") }
+        // The older Context switch turns it on for the List and the stats strip, never the PR board.
+        prefs.toggle("context")
+        for saved in [prefs, try reload(prefs)] {
+            XCTAssertTrue(saved.shows("context", in: .listRow))
+            XCTAssertTrue(saved.shows("context", in: .sessionStats))
+            XCTAssertFalse(saved.shows("context", in: .boardRow))
+        }
+        prefs.toggle("context")
+        // Every other stat on: a row that shows all the rest shows context too.
+        prefs.toggle("tools")
+        XCTAssertFalse(prefs.shows("context", in: .listRow), "Compactions is still hidden")
+        XCTAssertFalse(prefs.shows("context", in: .sessionStats))
+        prefs.toggle("compactions")
+        XCTAssertTrue(prefs.shows("context", in: .listRow))
+        XCTAssertTrue(prefs.shows("context", in: .sessionStats))
+        XCTAssertFalse(prefs.shows("context", in: .boardRow))
+        // The strip has no Last prompt switch: it counts prompts, which never had one.
+        prefs.toggle("promptRecency")
+        XCTAssertFalse(prefs.shows("context", in: .listRow))
+        XCTAssertTrue(prefs.shows("context", in: .sessionStats))
+        prefs.toggle("promptRecency")
+        // A saved choice wins and sticks, off or on, whatever the older switches say.
+        prefs.toggle("context", in: .listRow)
+        prefs.toggle("context", in: .boardRow)
+        prefs.toggle("context")
+        XCTAssertFalse(try reload(prefs).shows("context", in: .listRow), "Turned off, with every older switch on")
+        prefs.toggle("context"); prefs.toggle("tools")
+        XCTAssertTrue(try reload(prefs).shows("context", in: .boardRow), "Turned on where it starts off")
+        XCTAssertFalse(try reload(prefs).shows("context", in: .sessionStats), "The unsaved set still follows the older switches")
+    }
+
+    func testRowAndStatsSetsStartFromTheOlderSwitches() throws {
+        // A fresh install: the List shows times and recency, the PR board recency only.
+        var prefs = Preferences()
+        XCTAssertEqual(prefs.shown(.listRow), ["sessionTime", "thinkingTime", "promptRecency", "completionRecency"])
+        XCTAssertEqual(prefs.shown(.boardRow), ["promptRecency", "completionRecency"])
+        XCTAssertEqual(prefs.shown(.sessionStats), ["sessionTime", "thinkingTime", "prompts", "completions"])
+        // Older choices carry over: Show recaps, hidden and shown stats, and the opt-in Context switch.
+        prefs.boardRecaps = true
+        for key in ["thinkingTime", "promptRecency", "tools", "context"] { prefs.toggle(key) }
+        XCTAssertEqual(prefs.shown(.listRow), ["recap", "sessionTime", "completionRecency", "tools", "context"])
+        XCTAssertEqual(prefs.shown(.boardRow), ["recap", "promptRecency", "completionRecency"], "PR board rows showed both recency columns and no stats")
+        XCTAssertEqual(prefs.shown(.sessionStats), ["sessionTime", "prompts", "completions", "tools", "context"])
+        // The first change saves that set, which stops following the older switches. The others still do.
+        prefs.toggle("git", in: .listRow)
+        prefs.boardRecaps = false; prefs.toggle("tools")
+        XCTAssertEqual(prefs.shown(.listRow), ["recap", "sessionTime", "completionRecency", "tools", "context", "git"])
+        XCTAssertEqual(prefs.shown(.boardRow), ["promptRecency", "completionRecency"])
+        XCTAssertEqual(prefs.shown(.sessionStats), ["sessionTime", "prompts", "completions", "context"])
+        prefs.toggle("git", in: .listRow)
+        XCTAssertFalse(prefs.shows("git", in: .listRow))
+        // Each set is saved under the key every client uses, and only once it has changed.
+        func saved(_ prefs: Preferences) throws -> [String: Any] { try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(prefs)) as? [String: Any]) }
+        var json = try saved(prefs)
+        XCTAssertEqual(Set(try XCTUnwrap(json["listRow"] as? [String])), ["recap", "sessionTime", "completionRecency", "tools", "context"])
+        XCTAssertNil(json["boardRow"]); XCTAssertNil(json["sessionStats"])
+        prefs.toggle("changes", in: .boardRow); prefs.toggle("prompts", in: .sessionStats)
+        json = try saved(prefs)
+        XCTAssertEqual(Set(try XCTUnwrap(json["boardRow"] as? [String])), ["promptRecency", "completionRecency", "changes"])
+        XCTAssertEqual(Set(try XCTUnwrap(json["sessionStats"] as? [String])), ["sessionTime", "completions", "context"])
+        XCTAssertEqual(try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(prefs)), prefs)
+        // Preferences saved before the sets existed still load, and derive them again.
+        for key in ["listRow", "boardRow", "sessionStats"] { json.removeValue(forKey: key) }
+        let older = try JSONDecoder().decode(Preferences.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(older.shown(.listRow), ["sessionTime", "completionRecency", "context"])
+        XCTAssertEqual(older.shown(.boardRow), ["promptRecency", "completionRecency"])
+        XCTAssertEqual(Preferences.Shown.listRow.items, Preferences.Shown.boardRow.items)
+        XCTAssertEqual(Preferences.Shown.listRow.items, ["recap", "sessionTime", "thinkingTime", "promptRecency", "completionRecency", "tools", "compactions", "context", "git", "changes"])
+        XCTAssertEqual(Preferences.Shown.sessionStats.items, ["sessionTime", "thinkingTime", "prompts", "completions", "tools", "compactions", "context"])
+    }
+
+    func testGroupByMapsOntoTheTwoOlderSettings() {
+        var prefs = Preferences()
+        XCTAssertEqual(prefs.listGroupBy, .computer, "A fresh install groups by computer")
+        for (choice, computer, grouping) in [(GroupBy.one, false, "all"), (.computer, true, "all"), (.project, false, "project"), (.both, true, "project")] {
+            prefs.listGroupBy = choice
+            XCTAssertEqual(prefs.groupByComputer, computer, choice.rawValue)
+            XCTAssertEqual(prefs.grouping, grouping, choice.rawValue)
+            XCTAssertEqual(prefs.listGroupBy, choice)
+            XCTAssertEqual(prefs.boardGroupBy, computer ? .computer : .one, "The PR board shares the computer grouping")
+        }
+        // The PR board's choice changes only that shared grouping.
+        prefs.order = "alpha"
+        prefs.boardGroupBy = .one
+        XCTAssertEqual(prefs.listGroupBy, .project)
+        XCTAssertEqual(prefs.order, "alpha")
+        prefs.boardGroupBy = .computer
+        XCTAssertEqual(prefs.listGroupBy, .both)
+        XCTAssertEqual(GroupBy.allCases.map(\.label), ["One list", "Computer", "Project", "Computer, then project"])
+    }
+
+    func testBoardSessionsCarryGitStatusContextAndTimeBands() {
+        let full = Session(["session_id": "a", "branch": "main", "uncommitted": 3, "additions": 212, "deletions": 48, "stats": ["tools": 7, "context_used": 742_000, "context_limit": 1_000_000]])
+        XCTAssertEqual([full.uncommitted, full.additions, full.deletions], [3, 212, 48])
+        XCTAssertEqual(full.context?.label, "742k / 1M · 74%")
+        // A server that does not send them yet, or sends null, leaves the lines out.
+        let bare = Session(["session_id": "b", "stats": ["context_used": NSNull(), "context_limit": 1_000_000] as [String: Any]])
+        XCTAssertEqual([bare.uncommitted, bare.additions, bare.deletions], [0, 0, 0])
+        XCTAssertNil(bare.context)
+        for (used, palette) in [(690_000, 75), (700_000, 220), (840_000, 220), (850_000, 203)] {
+            XCTAssertEqual(ContextUsage(["context_used": used, "context_limit": 1_000_000])?.palette, palette, "\(used)")
+        }
+        XCTAssertEqual(Preferences.ageChoices.map(Preferences.ageLabel), ["1h", "3h", "6h", "9h", "12h", "24h", "All"])
+        XCTAssertEqual(Preferences.ageChoices.map(Preferences.ageMenuLabel), ["Last hour", "Last 3 hours", "Last 6 hours", "Last 9 hours", "Last 12 hours", "Last 24 hours", "All ages"])
+        XCTAssertEqual(Preferences.ageChoices.map(Preferences.agePalette), [51, 45, 39, 33, 27, 25, 245])
+    }
+
     func testComputerColorsMatchEveryClient() {
         for (name, palette) in [("claybook", 220), ("claybook-m4", 208), ("claymac-studio", 69), ("claybook-tavus", 115), (" ClayMac-Studio.LOCAL ", 69), ("ClayMac Studio", 69), ("ClayBook M4", 208), ("ClayBook Tavus", 115)] {
             XCTAssertEqual(Crab.computerPalette(name), palette, name)

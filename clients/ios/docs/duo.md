@@ -4,7 +4,7 @@ The app uses the window's horizontal size class to switch between a single sessi
 
 When the inner display has an active vertical fold, both columns stop at the fold's margins. Either sidebar position follows those margins. On a flat display, the sidebar takes up to 360 points and leaves the remaining width for the terminal. Expanded-board controls and search stay on the trailing side of an active fold; continuous scrolling content can span it.
 
-In tabletop posture, the board and session toolbars move to the bottom. Settings and Style popovers can shrink to fit the available space. Closing and reopening the phone retains the selected session and draft; keyboard focus may close when the navigation layout changes.
+In tabletop posture, the board and session toolbars move to the bottom; the board's filter bar stays at the top. The View and Account panels open as sheets at phone widths and as popovers at tablet widths. Closing and reopening the phone retains the selected session and draft; keyboard focus may close when the navigation layout changes.
 
 ## Verification — November 5, 2026
 

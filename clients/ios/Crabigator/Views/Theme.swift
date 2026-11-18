@@ -5,6 +5,9 @@ enum Crab {
     static func color(_ n: Int) -> Color { Color(uiColor: TerminalText.palette(n)) }
     static let muted = color(245), orange = color(179), deepOrange = color(208), mint = color(83), blue = color(39), title = color(75), purple = color(141), cyan = color(45), red = color(203), yellow = color(220)
     static let recap = color(69)
+    static let branch = hex("7ee787"), pink = color(212)
+    /// The drawn pickers' greys, the same on Android and the dashboard.
+    static let text = hex("E6EDF3"), soft = hex("C4CDD8"), dim = hex("9AA3AD"), box = hex("6B7684"), track = hex("3A4450"), line = hex("303A46"), tile = hex("151B22"), well = hex("0B0F14")
     // Keep this name hash and palette in sync with Android, web and the terminal board.
     static func computer(_ name: String) -> Color { color(computerPalette(name)) }
     static func computerPalette(_ name: String) -> Int {
@@ -53,7 +56,7 @@ struct SessionStatus: View {
     }
 }
 struct SessionTiming: View {
-    var session: Session, preferences: Preferences
+    var session: Session, shown: Set<String>
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
             let now = Int(timeline.date.timeIntervalSince1970)
@@ -63,21 +66,58 @@ struct SessionTiming: View {
                 timing(now, compact: true, duration: false)
             }.boardFont(11).monospacedDigit().lineLimit(1)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(SessionStatus(session: session).label), session time \(durationText(session.duration(now))), thinking time \(durationText(session.thinkingSeconds)), last prompt \(ageText(session.promptAt, now: now)), last completion \(ageText(session.completionAt, now: now))")
+                .accessibilityLabel(([SessionStatus(session: session).label] + [("sessionTime", "session time \(durationText(session.duration(now)))"), ("thinkingTime", "thinking time \(durationText(session.thinkingSeconds))"), ("promptRecency", "last prompt \(ageText(session.promptAt, now: now))"), ("completionRecency", "last completion \(ageText(session.completionAt, now: now))")].filter { shown.contains($0.0) }.map(\.1)).joined(separator: ", "))
         }
     }
     func timing(_ now: Int, compact: Bool, duration: Bool) -> some View {
         HStack(spacing: 7) {
             if duration {
-                if preferences.visible("sessionTime") { Text("◉ " + short(durationText(session.duration(now)), compact)).foregroundStyle(Crab.blue).fixedSize() }
-                if preferences.visible("thinkingTime") { Text("◐ " + short(durationText(session.thinkingSeconds), compact)).foregroundStyle(Crab.mint).fixedSize() }
+                if shown.contains("sessionTime") { Text("◉ " + short(durationText(session.duration(now)), compact)).foregroundStyle(Crab.blue).fixedSize() }
+                if shown.contains("thinkingTime") { Text("◐ " + short(durationText(session.thinkingSeconds), compact)).foregroundStyle(Crab.mint).fixedSize() }
             }
             Spacer(minLength: 4)
             SessionStatus(session: session)
-            RecencyColumns(session: session, now: now, showPrompt: preferences.visible("promptRecency"), showCompletion: preferences.visible("completionRecency"))
+            RecencyColumns(session: session, now: now, showPrompt: shown.contains("promptRecency"), showCompletion: shown.contains("completionRecency"))
         }
     }
     func short(_ text: String, _ compact: Bool) -> String { compact ? String(text.split(separator: " ").first ?? "—") : text }
+}
+
+/// The optional lines under a row's title: times (PR board), counts, git status and changes.
+/// A line with nothing to say is left out, so a stat never stands alone as a dash.
+struct SessionExtras: View {
+    var session: Session, shown: Set<String>
+    /// The List shows its times beside the status instead.
+    var times: Bool
+    var body: some View {
+        if times && (shown.contains("sessionTime") || shown.contains("thinkingTime")) {
+            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                stats([("sessionTime", "◉", "Session time", session.duration(Int(timeline.date.timeIntervalSince1970)).map { durationText($0) }, Crab.blue),
+                       ("thinkingTime", "◐", "Thinking time", session.thinkingSeconds.map { durationText($0) }, Crab.mint)])
+            }
+        }
+        stats([("tools", "⚒", "Tools", session.tools.map(String.init), Crab.orange), ("compactions", "⊜", "Compactions", session.compactions.map(String.init), Crab.orange)],
+              context: shown.contains("context") ? session.context : nil)
+        if shown.contains("git") && (!session.branch.isEmpty || session.uncommitted > 0) {
+            HStack(spacing: 8) {
+                if !session.branch.isEmpty { Text("⎇ " + session.branch).foregroundStyle(Crab.branch).lineLimit(1).truncationMode(.middle).accessibilityLabel("Branch " + session.branch) }
+                if session.uncommitted > 0 { Text("\(session.uncommitted) file\(session.uncommitted == 1 ? "" : "s") not committed").foregroundStyle(Crab.muted).lineLimit(1).layoutPriority(1) }
+            }.boardFont(11)
+        }
+        if shown.contains("changes") && (session.additions > 0 || session.deletions > 0) {
+            HStack(spacing: 8) { Text("Δ").foregroundStyle(Crab.pink); Text("+\(session.additions)").foregroundStyle(Crab.mint); Text("−\(session.deletions)").foregroundStyle(Crab.red) }
+                .boardFont(11).monospacedDigit().lineLimit(1).accessibilityElement(children: .ignore).accessibilityLabel("Changes: \(session.additions) added, \(session.deletions) removed")
+        }
+    }
+    @ViewBuilder private func stats(_ all: [(key: String, symbol: String, label: String, value: String?, color: Color)], context: ContextUsage? = nil) -> some View {
+        let items = all.filter { shown.contains($0.key) }
+        if context != nil || items.contains(where: { $0.value != nil }) {
+            HStack(spacing: 10) {
+                ForEach(items, id: \.key) { item in Text(item.symbol + " " + (item.value ?? "—")).foregroundStyle(item.color).accessibilityLabel(item.label + ": " + (item.value ?? "unknown")) }
+                if let context { Text("◔ " + context.label).foregroundStyle(Crab.color(context.palette)).accessibilityLabel("Context: " + context.label) }
+            }.boardFont(11).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
+        }
+    }
 }
 
 struct RecencyColumns: View {

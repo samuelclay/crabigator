@@ -8,20 +8,29 @@ struct BoardView: View {
     var select: (Session, [Session]) -> Void
     @State private var searching = false
     @State private var query = ""
-    @State private var settings = false
+    @State private var account = false
+    @State private var viewPanel = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var collapsed: Set<String> = []
     var spacing: BoardSpacing { BoardSpacing(density: model.preferences.density) }
     var spacingAnimation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.3) }
     var floatingToolbar: Bool { wide && expanded }
+    /// The tablet's Expand and Return button, shown while a session is selected.
+    var canExpand: Bool { wide && model.selectionID != nil }
+    var toolbarWidth: CGFloat { canExpand ? 284 : 236 }
     var body: some View {
         GeometryReader { geometry in
             let controlWidth = controlRegionWidth(in: geometry)
             let avoidsFold = controlWidth < geometry.size.width
             let tabletop = hasHorizontalFold(in: geometry)
+            // Full width, the filters sit either side of the floating toolbar, on its row.
+            let sharedRow = floatingToolbar && !tabletop && !avoidsFold
             VStack(spacing: 0) {
-                Color.clear.frame(height: tabletop || floatingToolbar && model.preferences.groupByComputer && !searching && !avoidsFold ? 0 : 60).animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
-                if searching { TextField("Search", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, 12).padding(.bottom, 8).frame(width: controlWidth).frame(maxWidth: .infinity, alignment: .trailing).accessibilityIdentifier("Search sessions") }
+                Color.clear.frame(height: tabletop || sharedRow ? 0 : 60).animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
+                if searching && !sharedRow { searchField(width: controlWidth) }
+                BoardFilterBar(model: model, list: listMode, wide: wide, open: $viewPanel, chipsWidth: sharedRow ? max(80, (controlWidth - toolbarWidth) / 2 - 20) : nil)
+                    .padding(.top, tabletop ? 8 : 0).frame(height: sharedRow ? 60 : nil).frame(width: controlWidth).frame(maxWidth: .infinity, alignment: .trailing)
+                if searching && sharedRow { searchField(width: controlWidth) }
                 if model.sessions.isEmpty && model.prs.isEmpty {
                     Spacer()
                     switch model.rosterStatus {
@@ -40,7 +49,7 @@ struct BoardView: View {
                 }
             }.background(Crab.ink)
                 .overlay(alignment: tabletop ? .bottom : .top) {
-                    header.frame(maxWidth: floatingToolbar ? 276 : .infinity)
+                    header(mark: controlWidth >= 264 || !canExpand).frame(maxWidth: floatingToolbar ? toolbarWidth : .infinity)
                         .contentShape(Rectangle()).simultaneousGesture(TapGesture().onEnded {})
                         .background { if floatingToolbar { Capsule().fill(.ultraThinMaterial).overlay(Capsule().strokeBorder(Color.white.opacity(0.12))).shadow(color: .black.opacity(0.25), radius: 8, y: 3) } }
                         .animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
@@ -70,18 +79,25 @@ struct BoardView: View {
         }
         return geometry.size.width
     }
-    var header: some View {
+    private func searchField(width: CGFloat) -> some View {
+        TextField("Search", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, 12).padding(.bottom, 8).frame(width: width).frame(maxWidth: .infinity, alignment: .trailing).accessibilityIdentifier("Search sessions")
+    }
+    func header(mark: Bool) -> some View {
         HStack(spacing: 4) {
-            Image("Crabigator").resizable().scaledToFit().frame(width: 28, height: 28).padding(8).accessibilityLabel("Crabigator")
-            Spacer()
-            NewSessionButton(model: model)
+            if mark { Image("Crabigator").resizable().scaledToFit().frame(width: 28, height: 28).padding(8).accessibilityLabel("Crabigator") }
+            Spacer(minLength: 0)
+            if canExpand {
+                IconButton(icon: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", label: expanded ? "Return to session" : "Expand List / PR board") { withAnimation(.easeInOut(duration: 0.36)) { expanded.toggle() } }
+            }
+            AddButton(model: model)
             IconButton(icon: "magnifyingglass", label: "Search", selected: searching) { withAnimation { searching.toggle(); if !searching { query = "" } } }
-            IconButton(icon: "gearshape", label: "Settings") { settings = true }
-                .popover(isPresented: $settings, attachmentAnchor: .rect(.bounds), arrowEdge: .top) { SettingsMenu(model: model,
-                    search: { settings = false; searching = true },
-                    fullscreen: wide && model.selectionID != nil ? { settings = false; withAnimation(.easeInOut(duration: 0.36)) { expanded.toggle() } } : nil,
-                    expanded: expanded).nativePopover() }
+            IconButton(icon: "person", label: "Account", selected: account) { account = true }
+                .popover(isPresented: $account, attachmentAnchor: .rect(.bounds), arrowEdge: .top) { AccountScreen(model: model).panelPresentation(tall: true) }
         }.padding(.horizontal, 8).padding(.vertical, floatingToolbar ? 2 : 6)
+            #if DEBUG
+            // Opens a panel at launch, so a screenshot needs no taps.
+            .task { let open = ProcessInfo.processInfo.environment["CRABIGATOR_TEST_OPEN"]; try? await Task.sleep(for: .seconds(1)); if open == "account" { account = true } else if open == "view" { viewPanel = true } }
+            #endif
     }
     var footer: some View { BrowserModeControl(model: model, wide: wide) }
     func sections(_ list: Bool, includeAge: Bool = true) -> [RosterSection] {
@@ -146,8 +162,8 @@ struct BoardView: View {
                                     Button {
                                         withAnimation(.easeInOut(duration: 0.3)) { if !collapsed.insert(machine).inserted { collapsed.remove(machine) }; proxy.scrollTo(machine, anchor: .top) }
                                     } label: {
-                                        HStack(spacing: 8) { Image(systemName: "desktopcomputer"); Text(machine).foregroundStyle(Crab.computer(machine)).lineLimit(1).frame(maxWidth: floatingToolbar ? max(60, (width - 308) / 2 - 36) : .infinity, alignment: .leading); Spacer(); Text("\(rows.count) \(rows.count == 1 ? "session" : "sessions")").boardFont(11); Image(systemName: collapsed.contains(machine) ? "chevron.right" : "chevron.down").boardFont(11) }
-                                            .boardFont(13, weight: .medium).foregroundStyle(Crab.muted).padding(.vertical, spacing.gap(13)).frame(minHeight: floatingToolbar ? 52 : 44).padding(.horizontal, 8).background(Crab.ink)
+                                        HStack(spacing: 8) { Image(systemName: "desktopcomputer"); Text(machine).foregroundStyle(Crab.computer(machine)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading); Spacer(); Text("\(rows.count) \(rows.count == 1 ? "session" : "sessions")").boardFont(11); Image(systemName: collapsed.contains(machine) ? "chevron.right" : "chevron.down").boardFont(11) }
+                                            .boardFont(13, weight: .medium).foregroundStyle(Crab.muted).padding(.vertical, spacing.gap(13)).frame(minHeight: 44).padding(.horizontal, 8).background(Crab.ink)
                                     }.buttonStyle(.plain).id(machine).accessibilityIdentifier("Machine \(machine)")
                                 }
                             }
@@ -174,6 +190,8 @@ struct BoardView: View {
                 // Lazy rows must discard cached wide/narrow geometry in both directions.
                 }.id(!list && width >= 840).transition(.identity)
                     .padding(.horizontal, 12).padding(.bottom, bottomInset)
+                    // Hiding only the scroll view left the other mode's rows in a tablet's accessibility tree.
+                    .accessibilityHidden(list != listMode)
             }.refreshable { await model.refresh() }
         }.animation(spacingAnimation, value: model.preferences.density)
     }
@@ -206,6 +224,7 @@ struct SessionRow: View {
     var list: Bool, wide: Bool
     @Environment(\.boardSpacing) private var spacing
     var body: some View {
+        let shown = preferences.shown(list ? .listRow : .boardRow)
         HStack(alignment: .sessionTitleCenter, spacing: 10) {
             IdentityChip(session: session)
             VStack(alignment: .leading, spacing: spacing.gap(6)) {
@@ -213,28 +232,23 @@ struct SessionRow: View {
                     Text(session.title).sessionTitleAlignment().boardFont(14, weight: .medium).foregroundStyle(session.active ? Crab.title : Crab.muted).lineLimit(wide || spacing.tight ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
                     if wide {
                         Text(session.branch).boardFont(12).foregroundStyle(Crab.muted).lineLimit(1).frame(width: 180, alignment: .leading)
-                        HStack(alignment: .sessionTitleCenter, spacing: 8) { SessionStatus(session: session); recency; Spacer(minLength: 0) }.frame(width: 360, alignment: .leading)
+                        HStack(alignment: .sessionTitleCenter, spacing: 8) { SessionStatus(session: session); recency(shown); Spacer(minLength: 0) }.frame(width: 360, alignment: .leading)
                     }
                 }
                 if !preferences.groupByComputer { Text(session.machine).boardFont(11).foregroundStyle(Crab.computer(session.machine)) }
-                if preferences.boardRecaps && !session.recap.isEmpty {
+                if shown.contains("recap") && !session.recap.isEmpty {
                     Text(session.recap).boardFont(12).foregroundStyle(Crab.recap).fixedSize(horizontal: false, vertical: true)
                 }
-                if list {
-                    SessionTiming(session: session, preferences: preferences)
-                    if preferences.visible("tools") || preferences.visible("compactions") {
-                        HStack { if preferences.visible("tools") { Text("⚒ \(session.tools.map(String.init) ?? "—")") }; if preferences.visible("compactions") { Text("⊜ \(session.compactions.map(String.init) ?? "—")") } }.boardFont(11).foregroundStyle(Crab.orange)
-                    }
-                } else {
-                    if !wide { HStack(alignment: .sessionTitleCenter) { Text(session.branch).boardFont(11).foregroundStyle(Crab.muted).lineLimit(1); Spacer(); HStack(spacing: 8) { SessionStatus(session: session); recency } } }
-                    ForEach(prs.filter { $0.visibleOnBoard(for: session.id) }) { pr in PRRow(pr: pr, wide: wide) }
-                }
+                if list { SessionTiming(session: session, shown: shown) }
+                else if !wide { HStack(alignment: .sessionTitleCenter) { Text(session.branch).boardFont(11).foregroundStyle(Crab.muted).lineLimit(1); Spacer(); HStack(spacing: 8) { SessionStatus(session: session); recency(shown) } } }
+                SessionExtras(session: session, shown: shown, times: !list)
+                if !list { ForEach(prs.filter { $0.visibleOnBoard(for: session.id) }) { pr in PRRow(pr: pr, wide: wide) } }
             }
         }.fixedSize(horizontal: false, vertical: true).contentShape(Rectangle())
     }
-    var recency: some View {
+    func recency(_ shown: Set<String>) -> some View {
         TimelineView(.periodic(from: .now, by: 1)) { t in
-            RecencyColumns(session: session, now: Int(t.date.timeIntervalSince1970))
+            RecencyColumns(session: session, now: Int(t.date.timeIntervalSince1970), showPrompt: shown.contains("promptRecency"), showCompletion: shown.contains("completionRecency"))
         }
     }
 }

@@ -28,7 +28,10 @@ final class ConductorTests: XCTestCase {
         XCTAssertFalse(app.buttons["Start session"].isEnabled)
         app.buttons["Done"].tap()
         app.buttons.matching(identifier: "List").allElementsBoundByIndex.first { $0.isHittable }!.tap()
-        XCTAssertTrue(app.buttons["New session"].waitForExistence(timeout: 5))
+        // On the board, New session is the first choice in the + menu.
+        XCTAssertTrue(app.buttons["Add"].waitForExistence(timeout: 5))
+        app.buttons["Add"].tap()
+        XCTAssertTrue(app.buttons["Watch a pull request"].waitForExistence(timeout: 5))
         app.buttons["New session"].tap()
         XCTAssertTrue(app.buttons["New session project"].waitForExistence(timeout: 5))
     }

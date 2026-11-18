@@ -32,7 +32,7 @@ final class NavigationTests: XCTestCase {
             let draft = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Keep this draft through resizing"), object: message)
             XCTAssertEqual(XCTWaiter.wait(for: [draft], timeout: 5), .completed)
             XCTAssertTrue(app.staticTexts[selectedID].waitForExistence(timeout: 5))
-            XCTAssertTrue(app.buttons["Style"].isHittable, "The trailing control must remain tappable after resizing")
+            XCTAssertTrue(app.buttons["Session view"].isHittable, "The trailing control must remain tappable after resizing")
             XCTAssertTrue(app.buttons["Terminal keys"].isHittable)
             XCTAssertTrue(terminal.exists)
             capture("Adaptive layout \(orientation.rawValue) keyboard")
@@ -42,35 +42,35 @@ final class NavigationTests: XCTestCase {
         capture("Adaptive terminal keyboard")
     }
 
-    /// Rows that are already on screen must redraw when a board setting changes.
+    /// Rows that are already on screen must redraw when a choice in the View panel changes.
     func testVisibleRowsFollowBoardSettings() throws {
         let app = XCUIApplication()
         app.launchEnvironment["CRABIGATOR_TEST_LAYOUT"] = "1"
         app.launchEnvironment["CRABIGATOR_TEST_COMPUTERS"] = "1"
         app.launch()
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Board view"].waitForExistence(timeout: 10))
         for mode in ["PR board", "List"] {
             let control = app.buttons[mode]
             if !(control.value as? String ?? "").hasPrefix("Selected") { control.tap() }
             XCTAssertTrue(app.buttons["Machine First computer"].waitForExistence(timeout: 5), "\(mode): a grouped board starts with computer headings")
             checkRows(in: app, mode, "grouped", contain: "computer", false)
-            setSwitch("Show recaps", on: true, in: app)
+            setRecap(on: true, mode, in: app)
             checkRows(in: app, mode, "grouped with recaps", contain: "Sample recap", true)
-            setSwitch("Show recaps", on: false, in: app)
+            setRecap(on: false, mode, in: app)
             checkRows(in: app, mode, "grouped without recaps", contain: "Sample recap", false)
 
-            setSwitch("Group by computer", on: false, in: app)
+            groupBy("One list", mode, in: app)
             XCTAssertFalse(app.buttons["Machine First computer"].exists, "\(mode): a combined board has no computer headings")
             capture("\(mode) combined")
             checkRows(in: app, mode, "combined", contain: "computer", true)
 
-            setSwitch("Show recaps", on: true, in: app)
+            setRecap(on: true, mode, in: app)
             capture("\(mode) with recaps")
             checkRows(in: app, mode, "with recaps", contain: "Sample recap", true)
-            setSwitch("Show recaps", on: false, in: app)
+            setRecap(on: false, mode, in: app)
             checkRows(in: app, mode, "without recaps", contain: "Sample recap", false)
 
-            setSwitch("Group by computer", on: true, in: app)
+            groupBy("Computer", mode, in: app)
             XCTAssertTrue(app.buttons["Machine First computer"].waitForExistence(timeout: 5), "\(mode): grouping again restores computer headings")
             capture("\(mode) grouped again")
             checkRows(in: app, mode, "grouped again", contain: "computer", false)
@@ -90,15 +90,34 @@ final class NavigationTests: XCTestCase {
         XCTAssertTrue(wrong.isEmpty, "\(mode), \(step): \(wrong.count) of \(rows.count) rows \(expected ? "lack" : "still show") \"\(text)\": \(wrong.joined(separator: "; "))")
     }
 
-    private func setSwitch(_ name: String, on: Bool, in app: XCUIApplication) {
-        app.buttons["Settings"].tap()
-        let toggle = app.switches[name]
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-        if (toggle.value as? String == "1") != on { toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap() }
-        XCTAssertEqual(toggle.value as? String, on ? "1" : "0", "\(name) should be \(on ? "on" : "off")")
-        // A tap outside the popover closes it.
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.9)).tap()
-        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: toggle)
+    /// The List and the PR board each keep their own Recap choice, in their own View panel.
+    private func setRecap(on: Bool, _ mode: String, in app: XCUIApplication) {
+        changeView(mode, in: app) { panel in
+            let chip = app.buttons["Recap"]
+            for _ in 0..<6 where !(chip.exists && chip.isHittable) { panel.swipeUp() }
+            XCTAssertTrue(chip.isHittable, "\(mode): the Recap chip should scroll into view")
+            if chip.isSelected != on { chip.tap() }
+            XCTAssertEqual(chip.isSelected, on, "\(mode): Recap should be \(on ? "on" : "off")")
+        }
+    }
+
+    private func groupBy(_ tile: String, _ mode: String, in app: XCUIApplication) {
+        changeView(mode, in: app) { _ in
+            let choice = app.buttons[tile]
+            XCTAssertTrue(choice.waitForExistence(timeout: 5))
+            choice.tap()
+            XCTAssertTrue(choice.isSelected, "\(mode): Group by should be \(tile)")
+        }
+    }
+
+    /// Opens the View panel for the mode on screen, makes one change, and closes it with Done.
+    private func changeView(_ mode: String, in app: XCUIApplication, _ change: (XCUIElement) -> Void) {
+        app.buttons["Board view"].tap()
+        let title = app.staticTexts["View " + mode]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "View should open for the \(mode)")
+        change(app.scrollViews["View panel"])
+        app.buttons["Done"].tap()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: title)
         XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed)
         Thread.sleep(forTimeInterval: 0.6)
     }
