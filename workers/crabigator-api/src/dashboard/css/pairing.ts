@@ -2,7 +2,7 @@
 export const pairingCss = `
 /* Keep setup centered without an empty session sidebar. */
 body:has(.pairing-gate) .sidebar,
-body:has(.pairing-gate) .header > :not(h1) { display: none; }
+body:has(.pairing-gate) .header-main > :not(h1) { display: none; }
 body:has(.pairing-gate) .dashboard-layout { padding-inline: 0; }
 
 /* Pairing gate styles */

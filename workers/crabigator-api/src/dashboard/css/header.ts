@@ -4,14 +4,17 @@ export const headerCss = `
 .header {
     background: var(--bg-abyss);
     border-bottom: 1px solid rgba(255,255,255,.05);
-    padding: 14px 24px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
     position: fixed;
     inset: 0 0 auto;
     z-index: 210;
     max-width: 100%;
+}
+/* The header's own row. The filter bar is a second row under it. */
+.header-main {
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 .header h1 { display: flex; align-items: center; gap: 20px; margin-right: auto; flex-shrink: 0; }
 .dashboard-brand { display: inline-flex; align-items: center; text-decoration: none; }
@@ -77,7 +80,7 @@ export const headerCss = `
 }
 
 /* One compact control language for navigation and utility actions. */
-.header .refresh-btn, .header .style-btn, .header .settings-btn,
+.header .refresh-btn, .header .settings-btn,
 .header .sessions-btn, .header .pr-board-btn {
     font-family: var(--font-ui);
     min-height: 34px;
@@ -94,7 +97,7 @@ export const headerCss = `
     box-shadow: none;
 }
 .header .sessions-btn.active, .header .pr-board-btn.active,
-.header .style-btn.active, .header .settings-btn.active {
+.header .settings-btn.active {
     color: var(--accent-peach);
     border-color: transparent;
     background: #2b302f;
@@ -103,7 +106,6 @@ export const headerCss = `
 .header .pr-board-btn-icon { color: inherit; }
 @media (hover: hover) and (pointer: fine) {
 .header .refresh-btn:hover,
-.header .style-btn:hover,
 .header .settings-btn:hover,
 .header .sessions-btn:hover,
 .header .pr-board-btn:hover { background: var(--bg-surface); color: var(--text-bright); }
@@ -112,7 +114,7 @@ export const headerCss = `
 
 @media (max-width: 768px) {
     .header-control-label { display: none; }
-    .header {
+    .header-main {
         flex-wrap: nowrap;
         gap: 6px;
         padding: 10px 12px;
@@ -121,7 +123,6 @@ export const headerCss = `
     .dashboard-brand .brand-logo, .dashboard-label { display: none; }
     .dashboard-brand .brand-crab { display: block; width: 32px; height: 32px; }
     .header .refresh-btn,
-    .header .style-btn,
     .header .settings-btn {
         width: 32px;
         height: 32px;
@@ -139,11 +140,6 @@ export const headerCss = `
         font-size: 13px;
         line-height: 1;
     }
-    .header .style-btn svg,
-    .header .settings-btn svg {
-        width: 14px;
-        height: 14px;
-    }
     /* Keep all three view labels legible on phones. */
     .header .pr-board-btn {
         width: 32px;
@@ -160,7 +156,6 @@ export const headerCss = `
     }
     .header #conductor-btn { width: auto; flex-basis: auto; padding: 0 7px; }
     .header .sessions-container,
-    .header .style-container,
     .header .settings-container {
         flex: 0 0 auto;
     }
@@ -202,7 +197,7 @@ export const headerCss = `
 
 @media (min-width: 769px) and (max-width: 1050px) { .dashboard-label { display: none; } }
 @media (max-width: 380px) {
-    .header { gap: 4px; padding: 8px; }
+    .header-main { gap: 4px; padding: 8px; }
     .header .sessions-btn { padding: 0 6px; }
     .header .status { display: none; }
     .header .refresh-btn { display: none; }

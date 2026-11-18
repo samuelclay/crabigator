@@ -25,7 +25,9 @@ export const initJs = `
                 const statusEl = document.getElementById('status');
                 if (statusEl) statusEl.textContent = 'Not paired';
             } else {
-                // Paired - load sessions normally
+                // Paired - load sessions normally. The filter bar goes up first
+                // so the header has its full height before any row is placed.
+                renderFilterBar();
                 initSidebar();
                 refreshAccountMenu();
                 loadSessions();

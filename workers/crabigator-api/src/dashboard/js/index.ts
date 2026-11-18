@@ -1,6 +1,9 @@
 import { conductorJs } from './conductor';
 // Dashboard JavaScript - combined export
 import { constantsJs } from './constants';
+import { viewPrefsJs } from './view-prefs';
+import { sessionRowJs } from './session-row';
+import { viewPanelJs } from './view-panel';
 import { scrollbackJs } from './scrollback';
 import { terminalJs } from './terminal';
 import { styleJs } from './style';
@@ -33,6 +36,8 @@ import { initJs } from './init';
 
 export const dashboardJs = [
     constantsJs,
+    viewPrefsJs,  // Must be after constantsJs (reads the old "Visible stats" choices)
+    sessionRowJs,
     sessionMarkJs,
     terminalJs,
     scrollbackJs,
@@ -59,6 +64,7 @@ export const dashboardJs = [
     pairingJs,
     subscriptionJs,  // Must be after pairingJs (uses getAuthHeaders)
     prBoardJs,  // Must be after pairingJs and changesWidgetJs (uses getAuthHeaders, PR helpers)
+    viewPanelJs,  // Must be before modulesJs: its Escape handling runs ahead of the fullscreen session's
     modulesJs,
     flowJs,
     conductorJs,

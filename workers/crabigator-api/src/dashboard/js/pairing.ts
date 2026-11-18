@@ -358,9 +358,11 @@ export const pairingJs = `
                     statusEl.textContent = data.needs_desktop
                         ? 'Signed in. Link a desktop with a pairing code.'
                         : 'Signed in. Connect the other provider if you want both logins on this account.';
+                    const providers = { github: 'GitHub', google: 'Google' };
                     listEl.innerHTML = identities.map((identity) => {
-                        const label = identity.username || identity.email || identity.provider;
-                        return '<div>' + escapeHtml(identity.provider) + ': ' + escapeHtml(label) + '</div>';
+                        const provider = providers[identity.provider] || identity.provider;
+                        const label = identity.username || identity.email || identity.name;
+                        return '<div>' + escapeHtml(label ? label + ' with ' + provider : provider) + '</div>';
                     }).join('');
                 } else {
                     statusEl.textContent = 'Pairing code only. Connect GitHub or Google to use the same account on MCP.';

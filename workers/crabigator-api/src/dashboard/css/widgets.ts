@@ -243,7 +243,7 @@ export const widgetsCss = `
 /* Single column when changes hidden (Git spans full width) */
 .widgets-content.no-changes { grid-template-columns: 1fr; }
 
-/* Git status section toggled off (Style popover → Visible Sections):
+/* Git status turned off in the drawer (View panel → In the drawer):
    hide the git widget and its header aggregate, let Changes span full width */
 body.hide-section-git .widget[id^="git-"] { display: none; }
 body.hide-section-git .wh-git { display: none; }
@@ -340,10 +340,6 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     }
     .widgets-header-row2 .wh-icon {
         font-size: 9px;
-    }
-    .style-popover {
-        right: -8px;
-        min-width: 200px;
     }
     .container {
         padding: 10px;

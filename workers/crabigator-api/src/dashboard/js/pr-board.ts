@@ -40,18 +40,8 @@ export const prBoardJs = `
         let prBoardPeekScreen = '';
         let prBoardPeekLines = [];
 
-        // View preferences, mirroring the CLI's [pr_board] config keys.
-        const PRB_VIEW_DEFAULTS = { detail: 0, maxAgeHours: 24, liveOnly: false, view: 'sessions' };
-        let prBoardViewPrefs = (() => {
-            try {
-                const stored = JSON.parse(localStorage.getItem('crabigatorPrBoardView') || '{}');
-                delete stored.lingerDays;
-                return Object.assign({}, PRB_VIEW_DEFAULTS, stored);
-            } catch (e) { return Object.assign({}, PRB_VIEW_DEFAULTS); }
-        })();
-        function savePrBoardView() {
-            try { localStorage.setItem('crabigatorPrBoardView', JSON.stringify(prBoardViewPrefs)); } catch (e) {}
-        }
+        // The board's stored choices (prBoardViewPrefs) live in view-prefs.ts,
+        // with the filter bar and the View panel that edit them.
 
         // Dashboard status colors; semantic roles match the CLI board.
         const PRB_C = {
@@ -69,14 +59,15 @@ export const prBoardJs = `
             [214, 178, 255], [175, 135, 255], [135, 95, 215], [95, 65, 150], [55, 45, 80],
         ];
         // Activity recency: quiet blue surfaces fade toward slate as sessions age.
+        // One bucket per time band, in the order of VIEW_BANDS.
         const PRB_BUCKETS = [
-            { max: 3600, label: 'Last hour', bg: '#304d59', text: '#d6e3e9', hours: 1, ageLabel: '1h' },
-            { max: 10800, label: '1–3 hours', bg: '#2c434f', text: '#d6e3e9', hours: 3, ageLabel: '3h' },
-            { max: 21600, label: '3–6 hours', bg: '#273b47', text: '#d6e3e9', hours: 6, ageLabel: '6h' },
-            { max: 32400, label: '6–9 hours', bg: '#243541', text: '#d6e3e9', hours: 9, ageLabel: '9h' },
-            { max: 43200, label: '9–12 hours', bg: '#21303b', text: '#b4bfc7', hours: 12, ageLabel: '12h' },
-            { max: 86401, label: '12–24 hours', bg: '#1d2933', text: '#b4bfc7', hours: 24, ageLabel: '24h' },
-            { max: Infinity, label: 'Older', bg: '#1b2731', text: '#b4bfc7', hours: null, ageLabel: 'all' },
+            { max: 3600, label: 'Last hour', bg: '#304d59', text: '#d6e3e9' },
+            { max: 10800, label: '1–3 hours', bg: '#2c434f', text: '#d6e3e9' },
+            { max: 21600, label: '3–6 hours', bg: '#273b47', text: '#d6e3e9' },
+            { max: 32400, label: '6–9 hours', bg: '#243541', text: '#d6e3e9' },
+            { max: 43200, label: '9–12 hours', bg: '#21303b', text: '#b4bfc7' },
+            { max: 86401, label: '12–24 hours', bg: '#1d2933', text: '#b4bfc7' },
+            { max: Infinity, label: 'Older', bg: '#1b2731', text: '#b4bfc7' },
         ];
         const PRB_THROBBER = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
         // Search needs this many characters, like the CLI: one or two letters
@@ -95,6 +86,9 @@ export const prBoardJs = `
             if (sessionsEl) sessionsEl.style.display = prBoardVisible ? 'none' : '';
             if (btn) btn.classList.toggle('active', prBoardVisible);
             document.getElementById('session-list-btn')?.classList.toggle('active', !prBoardVisible);
+            // The filter bar and an open View panel follow the view on screen.
+            closeViewPanel();
+            renderFilterBar();
             if (!prBoardVisible) {
                 parkBoardTerminals();
                 rerenderSessions();
@@ -171,11 +165,6 @@ export const prBoardJs = `
             ].join(' · ');
             return '<div class="prb-head">'
                 + '<span class="prb-hdr">⑆ Crabigator PR board</span>'
-                + '<span class="prb-ctl" id="prb-ctl-live" onclick="prBoardToggleLive()" title="Only sessions running right now, or the full durable history (l)"></span>'
-                + '<span class="prb-ctl" id="prb-ctl-view" onclick="prBoardToggleView()" title="One row per session, or one block per primary PR with its sessions beneath (s)"></span>'
-                + '<span class="prb-ctl" id="prb-ctl-recap" onclick="prBoardToggleRecap()" title="Show per-session recaps (r)"></span>'
-                + '<button class="prb-ctl" id="prb-ctl-computers" onclick="setGroupByComputer(!groupByComputer)" title="Group by computer, or combine computers in one list"></button>'
-                + '<span class="prb-ctl" id="prb-ctl-age" onclick="prBoardCycleAge()" title="Hide rows idle longer than this (a)"></span>'
                 + '<span class="prb-keys">' + keys + '</span>'
                 + '<span class="prb-addwrap"><input id="prb-add" placeholder="◉ watch a PR URL (w)" spellcheck="false" autocomplete="off"></span>'
                 + '<span class="prb-searchwrap"><input id="prb-search" placeholder="/ search" spellcheck="false" autocomplete="off"><span id="prb-matches"></span></span>'
@@ -287,9 +276,11 @@ export const prBoardJs = `
             renderPrBoardBody();
         }
 
-        // The CLI's keyboard shortcuts, active while the board is open.
+        // The CLI's keyboard shortcuts, active while the board is open. Keys
+        // pressed inside the filter bar, a menu or a panel belong to that control.
         document.addEventListener('keydown', e => {
-            if (!prBoardVisible || e.metaKey || e.ctrlKey || e.altKey || e.target?.closest('.session-card')) return;
+            if (!prBoardVisible || e.metaKey || e.ctrlKey || e.altKey
+                || e.target?.closest('.session-card, .filter-bar, .chip-menu, .view-panel, .settings-container')) return;
             const tag = e.target && e.target.tagName;
             const typing = tag === 'INPUT' || tag === 'TEXTAREA'
                 || (e.target && e.target.isContentEditable);
@@ -320,31 +311,34 @@ export const prBoardJs = `
             else if (e.key === 'q' || e.key === 'Escape') togglePrBoard();
         });
 
+        // The same choices the filter bar and the View panel make, on the
+        // terminal board's keys: l, r, s and a.
         function prBoardToggleLive() {
-            prBoardViewPrefs.liveOnly = !prBoardViewPrefs.liveOnly;
-            savePrBoardView();
-            renderPrBoard();
+            setBoardLiveOnly(!prBoardViewPrefs.liveOnly);
         }
         function prBoardToggleRecap() {
-            prBoardViewPrefs.detail = prBoardViewPrefs.detail === 1 ? 0 : 1;
-            savePrBoardView();
+            toggleViewSetItem('board', 'recap');
             renderPrBoard();
+            renderViewPanel();
         }
         // Flip between one row per session and one block per primary PR.
-        // Selection keys differ between the views, so it starts fresh.
         function prBoardToggleView() {
-            prBoardViewPrefs.view = prBoardViewPrefs.view === 'prs' ? 'sessions' : 'prs';
+            setBoardLead(prBoardViewPrefs.view === 'prs' ? 'sessions' : 'prs');
+        }
+        // Selection keys differ between the two, so it starts fresh.
+        function setBoardLead(view) {
+            if (prBoardViewPrefs.view === view) return;
+            prBoardViewPrefs.view = view;
             savePrBoardView();
             prBoardSelected = null;
             prBoardPeekIdx = 0;
             if (prBoardPeekOpen) prbClosePeek();
             renderPrBoard();
+            renderViewPanel();
         }
         function prBoardCycleAge() {
-            const cycle = [null, 1, 3, 6, 9, 12, 24];
-            prBoardViewPrefs.maxAgeHours = cycle[(cycle.indexOf(prBoardViewPrefs.maxAgeHours) + 1) % cycle.length];
-            savePrBoardView();
-            renderPrBoard();
+            const next = (viewBandIndex(prBoardViewPrefs.maxAgeHours) + 1) % VIEW_BANDS.length;
+            setBoardWindow(VIEW_BANDS[next].hours);
         }
         async function loadPrBoard() {
             const body = document.getElementById('prb-body');
@@ -369,42 +363,29 @@ export const prBoardJs = `
                 const metadata = new Map(boardSessions.map(s => [s.session_id, s]));
                 allSessions = allSessions.map(session => {
                     const detail = metadata.get(session.id);
-                    return detail ? { ...detail, ...session, title: detail.title, recap: detail.recap, branch: detail.branch,
-                        stats: { ...session.stats, ...detail.stats } } : session;
+                    if (!detail) return session;
+                    // A number the board does not have (context from a desktop
+                    // that never reported it) must not erase one already known.
+                    const known = Object.fromEntries(Object.entries(detail.stats || {}).filter(([, value]) => value != null));
+                    return { ...detail, ...session, title: detail.title, recap: detail.recap, branch: detail.branch,
+                        stats: { ...session.stats, ...known } };
                 });
                 for (const session of allSessions) {
                     if (sessions.get(session.id)?.element.classList.contains('session-row')) updateSessionHeader(session);
                 }
                 scheduleSidebarUpdate();
+                // New data can add a computer to the filter bar, or move a
+                // session across the edge of the chosen time window.
+                renderFilterBar();
+                refreshListFilter();
                 if (prBoardVisible) renderPrBoardBody();
             } catch (e) {
                 if (body && !prBoardLoaded) body.innerHTML = '<div class="prb-empty">Could not load the PR board.</div>';
             }
         }
 
-        function updatePrBoardControls() {
-            const set = (id, active, html) => {
-                const el = document.getElementById(id);
-                if (!el) return;
-                el.classList.toggle('active', active);
-                if (el.tagName === 'BUTTON') el.setAttribute('aria-pressed', String(active));
-                el.innerHTML = html;
-            };
-            set('prb-ctl-live', prBoardViewPrefs.liveOnly,
-                prbMnemonic('l', prBoardViewPrefs.liveOnly ? 'live' : 'all sessions'));
-            set('prb-ctl-view', prBoardViewPrefs.view === 'prs',
-                prbMnemonic('s', prBoardViewPrefs.view === 'prs' ? 'prs' : 'sessions'));
-            set('prb-ctl-computers', groupByComputer, groupByComputer ? 'by computer' : 'single list');
-            set('prb-ctl-recap', prBoardViewPrefs.detail === 1,
-                prbMnemonic('r', prBoardViewPrefs.detail === 1 ? 'recap' : 'compact'));
-            const bucket = prBoardViewPrefs.maxAgeHours === null
-                ? null : PRB_BUCKETS.find(b => b.hours === prBoardViewPrefs.maxAgeHours);
-            set('prb-ctl-age', prBoardViewPrefs.maxAgeHours !== 24,
-                prbMnemonic('a', bucket ? 'age ≤ ' + bucket.ageLabel : 'all ages'));
-        }
-
         function renderPrBoard() {
-            updatePrBoardControls();
+            renderFilterBar();
             renderPrBoardBody();
         }
 
@@ -580,8 +561,19 @@ export const prBoardJs = `
             const icon = prbStateIcon(state);
             const badge = state === 'question' || state === 'permission' || state === 'thinking'
                 ? icon : prbCool(icon, sessions.map(prbSessionCoolKey));
-            return badge + ' '
-                + prbAgePart('⟩', prompted, now) + ' ' + prbAgePart('⋖', completed, now);
+            // "Last prompt" and "Last completion" each show or hide their column.
+            const ages = [];
+            if (viewSets.board.promptRecency) ages.push(prbAgePart('⟩', prompted, now));
+            if (viewSets.board.completionRecency) ages.push(prbAgePart('⋖', completed, now));
+            return [badge].concat(ages).join(' ');
+        }
+        // The lines a session can add under its title on the board: times,
+        // counts, git and changes. The recap and the two ages have their own
+        // places in the row.
+        function prbSessionLinesHtml(s, now) {
+            const show = Object.assign({}, viewSets.board, { recap: false, promptRecency: false, completionRecency: false });
+            const html = sessionRowLinesHtml(boardRowFacts(s, now), show);
+            return html ? '<div class="prb-lines">' + html + '</div>' : '';
         }
         // Thinking, permission, or question — in-flight work, not a finished turn.
         function prbSessionIsWorking(s) {
@@ -601,9 +593,11 @@ export const prBoardJs = `
         // no session time to follow (for example, a watch) the
         // PR's own events place it — GitHub's updatedAt, the close, or its
         // last mention here.
-        // Paired computer, without a trailing .local. Empty when unknown.
+        // Paired computer, without stray spaces or a trailing .local. Empty
+        // when unknown. The filter menu and the List's filter name computers
+        // with this too, so one choice matches everywhere.
         function prbDeviceLabel(session) {
-            return String((session && session.device_name) || '').replace(/\\.local$/, '').trim();
+            return String((session && session.device_name) || '').trim().replace(/\\.local$/, '').trim();
         }
         // One list per computer, preserving session order. A PR with no
         // sessions is a single unnamed group (a watch).
@@ -1140,7 +1134,7 @@ export const prBoardJs = `
         // The recap rows under a session whose row already carries its
         // headline, so the expansion starts after it. Empty unless detail is on.
         function prbSessionRecapTailHtml(s, now) {
-            if (prBoardViewPrefs.detail !== 1 || !s.recap || !s.recap.headline) return '';
+            if (!viewSets.board.recap || !s.recap || !s.recap.headline) return '';
             return prbRecapRows(s.recap, now).slice(1)
                 .map(row => prbDlRowHtml(row, row.right)).join('');
         }
@@ -1158,6 +1152,7 @@ export const prBoardJs = `
             html += '<div class="prb-l1"><span class="prb-l1-left">' + prbSessionLabelHtml(s)
                 + '</span>' + prbActivityHtml(item, idx, now)
                 + '<span class="prb-status"></span></div>';
+            html += prbSessionLinesHtml(s, now);
             html += prbSessionRecapTailHtml(s, now);
             item.prs.slice(0, PRB_MAX_SESSION_PRS).forEach((sub, subIdx) => {
                 const pr = sub.entry.pr;
@@ -1171,7 +1166,7 @@ export const prBoardJs = `
                     + prbStatsCells(pr.url, pr.additions, pr.deletions, pr.changed_files)
                     + '<span class="prb-status">' + prbStatusCells(pr, idx, sub.primary, subIdx, prbSessScope(s))
                     + '</span></div>';
-                if (prBoardViewPrefs.detail === 1) html += prbPrViewDetailHtml(pr);
+                if (viewSets.board.recap) html += prbPrViewDetailHtml(pr);
             });
             const hidden = item.prs.length - PRB_MAX_SESSION_PRS;
             if (hidden > 0) {
@@ -1212,10 +1207,11 @@ export const prBoardJs = `
                 html += '<div class="prb-l2"><span class="prb-l2-left"><span class="prb-branch">⎇ '
                     + escapeHtml(pr.branch) + '</span></span></div>';
             }
-            if (prBoardViewPrefs.detail === 1) html += prbPrViewDetailHtml(pr);
+            if (viewSets.board.recap) html += prbPrViewDetailHtml(pr);
             const peekList = prbPeekSessions(item);
             item.sessions.forEach(s => {
                 html += prbPrViewSessionHtml(s, idx, peekList.indexOf(s))
+                    + prbSessionLinesHtml(s, now)
                     + prbSessionRecapTailHtml(s, now);
             });
             html += item.previews.join('') + '</div>';
@@ -1259,7 +1255,8 @@ export const prBoardJs = `
                 + prbActivityHtml(item, idx, now)
                 + prbStatsCells('', s.additions, s.deletions, s.uncommitted)
                 + '<span class="prb-status"></span></div>';
-            if (prBoardViewPrefs.detail === 1 && s.recap && s.recap.headline) {
+            html += prbSessionLinesHtml(s, now);
+            if (viewSets.board.recap && s.recap && s.recap.headline) {
                 for (const row of prbRecapRows(s.recap, now)) {
                     html += prbDlRowHtml(row, row.right);
                 }
@@ -1558,9 +1555,7 @@ export const prBoardJs = `
             if (!body) return;
             const now = Math.floor(Date.now() / 1000);
             const q = prBoardQuery.trim().toLowerCase();
-            const maxBucket = prBoardViewPrefs.maxAgeHours === null
-                ? PRB_BUCKETS.length - 1
-                : PRB_BUCKETS.findIndex(b => b.hours === prBoardViewPrefs.maxAgeHours);
+            const maxBucket = viewBandIndex(prBoardViewPrefs.maxAgeHours);
 
             // Dispositions applied server-side too, but a toggle made just now
             // should reshape the board before the next fetch. PR view keeps
@@ -1572,6 +1567,8 @@ export const prBoardJs = `
             // that ended render stale so the live ones stand out.
             // Session-less PRs (watches) stay PR blocks in both views.
             const prView = prBoardViewPrefs.view === 'prs';
+            // The filter bar's computer: only that computer's sessions count.
+            const onComputer = s => !prBoardViewPrefs.computer || prbDeviceLabel(s) === prBoardViewPrefs.computer;
             prbObserveBoard();
             const entries = [];
             const sessBlocks = new Map();
@@ -1583,10 +1580,14 @@ export const prBoardJs = `
                 // here lets a dismissal made just now reshape the board before
                 // the next fetch.
                 const notDismissed = s => prbSessionDisposition(e.pr, s) !== 'dismissed';
-                const sessions = (e.sessions || []).filter(notDismissed);
+                const sessions = (e.sessions || []).filter(notDismissed).filter(onComputer);
                 const contributors = prView
                     ? sessions
-                    : prbContributorSessions(e).filter(notDismissed);
+                    : prbContributorSessions(e).filter(notDismissed).filter(onComputer);
+                // A PR whose sessions all run on other computers leaves with
+                // them. A watched PR belongs to the account, so it stays.
+                if (prBoardViewPrefs.computer && !sessions.length && !contributors.length
+                    && prbContributorSessions(e).length && !e.pr.watched) continue;
                 if (prView || !contributors.length) {
                     if (prView && !primary && !e.pr.watched) continue;
                     const ordered = sessions.slice().sort((a, b) =>
@@ -1659,7 +1660,7 @@ export const prBoardJs = `
             // session-id match counts.
             const workspaces = [];
             for (const s of prBoardSessions) {
-                if (!s.active) continue;
+                if (!s.active || !onComputer(s)) continue;
                 const sessKey = s.session_id || s.dir_name;
                 if (!prView && sessBlocks.has(sessKey)) continue;
                 const represented = !!s.session_id && prBoardEntries.some(e =>
@@ -1826,6 +1827,23 @@ export const prBoardJs = `
             // A selected row can disappear between refreshes; the pane follows
             // whatever the selection now points at.
             if (prBoardPeekOpen) prbSyncPeekStream();
+        }
+
+        // The View panel's sample: one session block drawn by the board's own
+        // row code, from a made-up session and pull request.
+        function prbSampleRowHtml(session, now) {
+            const pr = {
+                owner: 'samuelclay', repo: 'crabigator', number: 2217, url: '',
+                title: 'Live updates and a new stories pill', state: 'OPEN', branch: session.branch,
+                additions: 9036, deletions: 117, changed_files: 12,
+                checks_total: 4, checks_pending: 1, checks_failed: 0,
+                mergeable: 'MERGEABLE', merge_state_status: 'CLEAN',
+            };
+            const entry = { owner: pr.owner, repo: pr.repo, number: pr.number, pr };
+            return prbSessViewRowHtml({
+                kind: 'sessview', session, sessions: [session], prs: [{ entry, primary: true }],
+                stale: false, key: 'view-sample', previews: [],
+            }, 0, now);
         }
 
         // Keep row and terminal nodes mounted across refreshes. Only changed

@@ -41,7 +41,7 @@ export const prBoardCss = `
 }
 .pr-board[hidden] { display: none !important; }
 
-/* Header: title, counts, and the CLI's s/p/r/a controls as chips */
+/* Header: title, key hints, and the watch and search boxes */
 .prb-head {
     display: flex;
     align-items: center;
@@ -50,13 +50,6 @@ export const prBoardCss = `
     margin-bottom: 14px;
 }
 .prb-hdr { color: var(--text-bright); font-family: var(--font-ui); font-weight: 600; font-size: 16px; white-space: nowrap; }
-.prb-ctl { color: var(--text-dim); cursor: pointer; user-select: none; white-space: nowrap; }
-@media (hover: hover) and (pointer: fine) {
-.prb-ctl:hover { color: var(--text-mid); }
-}
-.prb-ctl.active { color: var(--accent-yellow); }
-.prb-ctl:is(button) { background: none; border: 0; padding: 0; font: inherit; }
-.prb-ctl u { text-underline-offset: 2px; }
 .prb-keys { color: var(--text-dim); white-space: nowrap; }
 .prb-keys u { text-underline-offset: 2px; }
 .prb-addwrap { margin-left: auto; }
@@ -90,6 +83,8 @@ export const prBoardCss = `
     overflow-x: hidden;
     overflow-y: auto;
     padding-bottom: 34px;
+    /* The View panel's text size scales the board as it scales the List. */
+    zoom: var(--font-scale);
 }
 .prb-bucket {
     grid-column: 1 / -1;
@@ -114,6 +109,9 @@ export const prBoardCss = `
 @media (hover: hover) and (pointer: fine) {
 .prb-row:hover { background: rgba(255, 255, 255, 0.035); }
 }
+/* Row spacing: Tight, Normal (the default) and Relaxed. */
+body[data-row-spacing="compact"] .prb-row { padding-block: 0; }
+body[data-row-spacing="relaxed"] .prb-row { padding-block: 7px; }
 /* Rows whose sessions have all ended dim like the CLI's stale rows. */
 .prb-row.prb-stale { opacity: 0.55; }
 @media (hover: hover) and (pointer: fine) {
@@ -230,6 +228,10 @@ a.prb-files:hover { text-decoration: underline; }
 @media (hover: hover) and (pointer: fine) {
 .prb-slack:hover { text-decoration: underline; }
 }
+
+/* The lines a session can add under its title: times, counts, git, changes. */
+.prb-lines { grid-column: 1 / -1; display: flex; flex-direction: column; min-width: 0; padding-left: 19px; }
+.prb-lines .row-line { font-size: inherit; }
 
 /* PR view (p): session sub-rows beneath each primary PR's header */
 .prb-sub-left { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding-left: 19px; }

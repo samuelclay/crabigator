@@ -91,8 +91,8 @@ export const sidebarJs = `
             // Apply saved width
             document.documentElement.style.setProperty('--sidebar-width', sidebarWidth + 'px');
 
-            // Apply saved density
-            sidebar.classList.toggle('compact', sidebarDensity === 'compact');
+            // Apply saved row spacing
+            applyRowSpacing();
 
             // Apply mode
             applySidebarMode();
@@ -149,9 +149,6 @@ export const sidebarJs = `
 
             // Render content
             updateSidebarContent();
-
-            // Update settings controls to match state
-            updateSidebarSettingsControls();
         }
 
         function applySidebarMode() {
@@ -186,7 +183,6 @@ export const sidebarJs = `
             const sidebar = document.getElementById('sidebar');
             if (!sidebar || sidebar.classList.contains('collapsed')) return;
             sidebar.classList.add('collapsed');
-            closeSidebarSettings();
             updateSessionsButtonState();
             updateSidebarBackdrop();
         }
@@ -207,7 +203,7 @@ export const sidebarJs = `
             }
 
             sidebar.classList.remove('collapsed');
-            closeStylePopover();
+            closeViewPanel();
             closeSettingsPopover();
             updateSidebarContent();
             updateSessionsButtonState();
@@ -218,6 +214,7 @@ export const sidebarJs = `
             sidebarPinned = true;
             localStorage.setItem('crabigator-sidebar-pinned', 'true');
             applySidebarMode();
+            renderViewPanel();
             // Recalculate fit layout
             requestAnimationFrame(() => {
                 if (typeof updateFitLayout === 'function') updateFitLayout();
@@ -227,8 +224,8 @@ export const sidebarJs = `
         function closeSidebar() {
             sidebarPinned = false;
             localStorage.setItem('crabigator-sidebar-pinned', 'false');
-            closeSidebarSettings();
             applySidebarMode();
+            renderViewPanel();
             // Recalculate fit layout
             requestAnimationFrame(() => {
                 if (typeof updateFitLayout === 'function') updateFitLayout();
@@ -254,79 +251,41 @@ export const sidebarJs = `
             backdrop.classList.toggle('visible', isVisible && window.innerWidth <= 768);
         }
 
-        function toggleSidebarSettings() {
-            const popover = document.getElementById('sidebar-settings-popover');
-            const btn = document.querySelector('.sidebar-settings-btn');
-            if (!popover) return;
-
-            const isVisible = popover.classList.toggle('visible');
-            if (btn) btn.classList.toggle('active', isVisible);
-        }
-
-        function closeSidebarSettings() {
-            const popover = document.getElementById('sidebar-settings-popover');
-            const btn = document.querySelector('.sidebar-settings-btn');
-            if (popover) popover.classList.remove('visible');
-            if (btn) btn.classList.remove('active');
-        }
-
         function setSidebarPosition(pos) {
             sidebarPosition = pos;
             localStorage.setItem('crabigator-sidebar-position', pos);
             const layout = document.getElementById('dashboard-layout');
             if (layout) layout.dataset.sidebarPosition = pos;
-            updateSidebarSettingsControls();
         }
 
-        function setSidebarDensity(density) {
-            sidebarDensity = density;
-            localStorage.setItem('crabigator-sidebar-density', density);
-            const sidebar = document.getElementById('sidebar');
-            if (sidebar) {
-                sidebar.classList.toggle('compact', density === 'compact');
-            }
-            updateSidebarSettingsControls();
+        // Row spacing for the List, the session list beside it and the PR
+        // board. It keeps the session list's stored density values.
+        function setRowSpacing(spacing) {
+            sidebarDensity = spacing;
+            localStorage.setItem('crabigator-sidebar-density', spacing);
+            applyRowSpacing();
         }
 
-        function setSessionClickAction(action) {
-            sessionClickAction = action;
-            localStorage.setItem('crabigator-click-action', action);
-            updateSidebarSettingsControls();
+        function applyRowSpacing() {
+            document.body.dataset.rowSpacing = ROW_SPACINGS.some(([value]) => value === sidebarDensity)
+                ? sidebarDensity : 'comfortable';
         }
 
-        function toggleSidebarStat(stat) {
-            sidebarVisibleStats[stat] = !sidebarVisibleStats[stat];
+        // The flow scene beside an open session's drawer. It keeps its place
+        // in the old "Visible stats" key so a saved choice carries over.
+        function toggleFlowScene() {
+            sidebarVisibleStats.flow = !sidebarVisibleStats.flow;
             localStorage.setItem('crabigator-sidebar-stats', JSON.stringify(sidebarVisibleStats));
-            updateSidebarContent();
             applySessionCardStatsVisibility();
-            updateSidebarSettingsControls();
         }
 
+        // Each part of an open session's stats strip names the items that
+        // keep it on screen.
         function applySessionCardStatsVisibility(root = document) {
+            const visible = stat => stat === 'flow' ? sidebarVisibleStats.flow : viewSets.session[stat];
             root.querySelectorAll('[data-card-stats]').forEach(element => {
-                const stats = element.dataset.cardStats.split(' ');
-                element.style.display = stats.some(stat => sidebarVisibleStats[stat]) ? '' : 'none';
+                element.style.display = element.dataset.cardStats.split(' ').some(visible) ? '' : 'none';
             });
-        }
-
-        function updateSidebarSettingsControls() {
-            // Position
-            document.querySelectorAll('.sb-opt-position').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.position === sidebarPosition);
-            });
-            // Density
-            document.querySelectorAll('.sb-opt-density').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.density === sidebarDensity);
-            });
-            // Click action
-            document.querySelectorAll('.sb-opt-click').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.click === sessionClickAction);
-            });
-            // Stat checkboxes
-            for (const [stat, visible] of Object.entries(sidebarVisibleStats)) {
-                const cb = document.getElementById('sb-stat-' + stat);
-                if (cb) cb.checked = visible;
-            }
         }
 
         function handleSessionClick(sessionId) {
@@ -437,46 +396,8 @@ export const sidebarJs = `
         function renderSidebarSessionItem(session) {
             const isFocused = sessionMatchesFocus(session);
             const isActive = sidebarActiveSessionId === session.id;
-            const stats = session.stats;
-            const vs = sidebarVisibleStats;
-
-            const sessionTime = stats?.work_seconds ? formatDuration(stats.work_seconds) : '';
-            const thinkingTime = stats?.thinking_seconds ? formatDuration(stats.thinking_seconds) : '';
-            const promptsCount = stats?.prompts || 0;
-            const promptsChangedAt = stats?.prompts_changed_at || 0;
-            const promptsElapsed = promptsChangedAt ? formatElapsed(promptsChangedAt) : '—';
-            const completionsCount = stats?.completions || 0;
-            const completionsChangedAt = stats?.completions_changed_at || 0;
-            const completionsElapsed = completionsChangedAt ? formatElapsed(completionsChangedAt) : '—';
-
-            const hasStats = sessionTime || thinkingTime || promptsCount > 0 || completionsCount > 0
-                || promptsChangedAt || completionsChangedAt;
-
-            let statsHtml = '';
-            if (vs.sessionTime) statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#58a6ff">◉</span>' + (sessionTime || '—') + '</span>';
-            if (vs.thinkingTime) statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#3fb950">◐</span>' + (thinkingTime || '—') + '</span>';
-            if (vs.prompts || vs.promptRecency) {
-                statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#8b949e">⟩</span>'
-                    + (vs.prompts ? promptsCount : '')
-                    + (vs.promptRecency ? '<span class="si-elapsed" data-recency-timestamp="' + promptsChangedAt + '">' + promptsElapsed + '</span>' : '')
-                    + '</span>';
-            }
-            if (vs.completions || vs.completionRecency) {
-                statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#8b949e">⋖</span>'
-                    + (vs.completions ? completionsCount : '')
-                    + (vs.completionRecency ? '<span class="si-elapsed" data-recency-timestamp="' + completionsChangedAt + '">' + completionsElapsed + '</span>' : '')
-                    + '</span>';
-            }
-
-            if (vs.context) {
-                const context = contextUsage(stats);
-                statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#8b949e">◔</span>'
-                    + (context ? '<span style="color:' + context.color + '">' + context.label + '</span>' : '—')
-                    + '</span>';
-            }
-
-            // Tools and compactions don't have matching data in popover stats, show count if available
-            // (These stats are available in the session card widgets, but the popover format uses simpler stats)
+            // The same lines, in the same order, as the row in the List.
+            const linesHtml = sessionRowLinesHtml(listRowFacts(session.id, Date.now() / 1000), viewSets.list);
 
             const classes = ['session-item'];
             if (isFocused) classes.push('focused');
@@ -503,7 +424,7 @@ export const sidebarJs = `
                         \${titleHtml}
                         <span class="session-item-state \${session.state}">\${session.state}</span>
                     </div>
-                    \${statsHtml ? '<div class="session-item-stats' + (hasStats ? '' : ' dim') + '">' + statsHtml + '</div>' : ''}
+                    \${linesHtml ? '<div class="session-item-lines">' + linesHtml + '</div>' : ''}
                 </div>
             \`;
         }
@@ -628,7 +549,10 @@ export const sidebarJs = `
                 }
             }
 
-            const sidebarSessions = getSidebarSessions(allSessions);
+            // Outside focused mode this list follows the filter bar, like the List.
+            const inFilter = isFocusedMode() ? null : listSessionsInFilter();
+            const sidebarSessions = getSidebarSessions(allSessions)
+                .filter(session => !inFilter || inFilter.has(session.id));
 
             if (sidebarSessions.length === 0) {
                 render('<div class="sessions-empty">' + getSessionsEmptyMessage(allSessions.length > 0) + '</div>');

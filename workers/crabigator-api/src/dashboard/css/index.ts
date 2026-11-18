@@ -17,6 +17,7 @@ import { sidebarCss } from './sidebar';
 import { subscriptionCss } from './subscription';
 import { voiceCss } from './voice';
 import { prBoardCss } from './pr-board';
+import { viewPanelCss } from './view-panel';
 
 export const dashboardCss = [
     baseCss,
@@ -37,4 +38,5 @@ export const dashboardCss = [
     prBoardCss,
     modulesCss,
     conductorCss,
+    viewPanelCss,
 ].join('\n');

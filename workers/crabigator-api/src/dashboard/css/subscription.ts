@@ -1,30 +1,7 @@
-// Billing portal link for accounts that still carry a paid subscription
+// Billing portal link for accounts that still carry a paid subscription.
+// It is a row in the Account popover (.account-row in view-panel.ts), which
+// also styles it while it is disabled.
 export const subscriptionCss = `
-.manage-subscription-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-family: var(--font-ui);
-    font-size: 11px;
-    color: var(--accent-cyan);
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-@media (hover: hover) and (pointer: fine) {
-.manage-subscription-link:hover {
-    color: var(--text-primary);
-    text-decoration: underline;
-}
-}
-.manage-subscription-link:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-.manage-subscription-link svg {
-    width: 12px;
-    height: 12px;
-}
+.manage-subscription-link { justify-content: space-between; }
+.manage-subscription-link svg { width: 12px; height: 12px; color: var(--vp-muted); }
 `;

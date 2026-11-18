@@ -10,8 +10,15 @@ export const modulesCss = `
 .session-header .session-context { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10px; color: var(--text-dim); }
 .container .session-card .session-header .cwd { display: inline; font: inherit; margin: 0; }
 .session-header .branch { color: #7ee787; font: inherit; }
-.container .session-header .session-row-recap { margin: 0; max-width: none; font-size: 11px; color: var(--text-mid); }
-.session-header .session-row-recap:empty, .session-header .branch:empty, .session-header .session-row-stats:empty { display: none; }
+.session-header .row-computer { font: inherit; }
+.session-header .session-row-lines { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.session-header .session-row-lines:empty, .session-header .branch:empty, .session-header .row-computer:empty, .session-header .cwd:empty { display: none; }
+/* Row spacing in the List: Tight keeps a title on one line, Relaxed gives it room. */
+body[data-row-spacing="compact"] .container .session-row .session-header { padding-block: 6px; }
+body[data-row-spacing="compact"] .container .session-row .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body[data-row-spacing="compact"] .session-row .session-info, body[data-row-spacing="compact"] .session-row .session-row-lines { gap: 2px; }
+body[data-row-spacing="relaxed"] .container .session-row .session-header { padding-block: 18px; }
+body[data-row-spacing="relaxed"] .session-row .session-info, body[data-row-spacing="relaxed"] .session-row .session-row-lines { gap: 7px; }
 .container .session-header .generated-title { font-family: var(--font-ui); max-width: none; color: #8bbcf0; }
 .container .session-header .session-actions { gap: 4px; min-height: 36px; }
 .container .session-header .collapse-btn { min-width: 28px; min-height: 28px; font-size: 20px; }

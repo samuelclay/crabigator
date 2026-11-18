@@ -2,7 +2,7 @@
 // session body, directly under the terminal screen, so it reads as a
 // "what just happened" handoff for the live PTY view above it.
 export const recapCss = `
-/* Section visibility toggles (Style popover → Visible Sections).
+/* The drawer's parts, switched on and off in the View panel (In the drawer).
    !important overrides the inline display the widgets set from live data. */
 body.hide-section-recap .session-recap,
 body.hide-section-recap .session-recap-history { display: none !important; }

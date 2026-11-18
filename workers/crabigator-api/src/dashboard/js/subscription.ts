@@ -9,9 +9,7 @@ export const subscriptionJs = `
                 const data = await resp.json();
                 const paying = data.is_pro === true && !!(data.subscription && data.subscription.provider);
                 const section = document.getElementById('subscription-section');
-                const divider = document.getElementById('subscription-divider');
                 if (section) section.hidden = !paying;
-                if (divider) divider.hidden = !paying;
             } catch (err) {
                 console.error('Error fetching subscription:', err);
             }

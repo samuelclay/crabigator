@@ -37,7 +37,7 @@ html {
 }
 
 /* Prevent double-tap zoom on interactive elements */
-button, a, [role="button"], [onclick], input, textarea, select, .style-option, .style-popover {
+button, a, [role="button"], [onclick], input, textarea, select {
     touch-action: manipulation;
 }
 

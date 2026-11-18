@@ -667,22 +667,36 @@ export const changesWidgetJs = `
             if (widgets) widgets.innerHTML = html;
         }
 
+        // The lines under a row's title. The View panel paints its sample
+        // row with this too, so the sample is the real row.
+        function paintSessionRowContext(header, row, show) {
+            const computer = header.querySelector('.row-computer');
+            computer.textContent = row.computer ? cleanDeviceName(row.computer) : '';
+            computer.style.color = row.computer ? computerColor(row.computer) : '';
+            const cwd = header.querySelector('.cwd');
+            cwd.textContent = row.cwd.split('/').pop() || '';
+            cwd.title = row.cwd;
+            // The Git status line carries the branch when it is shown.
+            header.querySelector('.branch').textContent = show.git ? '' : row.branch;
+            const lines = header.querySelector('.session-row-lines');
+            const html = sessionRowLinesHtml(row.facts, show);
+            if (lines.rowHtml !== html) {
+                lines.rowHtml = html;
+                lines.innerHTML = html;
+            }
+        }
+
         function updateSessionHeaderContext(sessionId) {
             const data = sessions.get(sessionId);
             const header = data?.element.querySelector('.session-header');
             if (!header) return;
-            const cwd = header.querySelector('.cwd');
-            cwd.textContent = [data.deviceName, data.cwd?.split('/').pop()].filter(Boolean).join(' · ');
-            cwd.title = data.cwd || '';
-            header.querySelector('.branch').textContent = data.git?.branch || '';
-            const stats = data.stats || {};
-            header.querySelector('.session-row-stats').textContent = [
-                stats.work_seconds != null ? formatDuration(stats.work_seconds) : '',
-                stats.prompts != null ? stats.prompts + ' prompts' : ''
-            ].filter(Boolean).join(' · ');
-            const latest = data.recap?.latest || data.recapHistory?.[data.recapHistory.length - 1];
-            const headline = latest?.headline || '';
-            header.querySelector('.session-row-recap').textContent = /completed the turn without captured transcript output/i.test(headline) ? '' : headline;
+            paintSessionRowContext(header, {
+                // A row names its computer unless a computer heading sits above it.
+                computer: data.deviceName && !data.element.closest('.device-group') ? data.deviceName : '',
+                cwd: data.cwd || '',
+                branch: data.git?.branch || '',
+                facts: listRowFacts(sessionId, Date.now() / 1000),
+            }, viewSets.list);
         }
 
         function updateSessionTitleHierarchy(sessionId) {

@@ -2,7 +2,7 @@ import { faviconPath, faviconIcoPath, touchIconPath } from './assets/home-brand'
 // Dashboard HTML served at /dashboard
 import { dashboardCss } from './dashboard/css';
 import { dashboardJs } from './dashboard/js';
-import { brandCrabSvg, brandLogoSvg, iconChevronRight } from './dashboard/icons';
+import { brandCrabSvg, brandLogoSvg, iconChevronRight, iconPerson, iconSidebar, iconSliders } from './dashboard/icons';
 import type { RuntimeConfig } from './config';
 import { metaPixelHtml, usePublicOrigin } from './html-render';
 
@@ -39,208 +39,106 @@ export const dashboardHtml = `<!DOCTYPE html>
         <div class="deploy-countdown" id="deploy-countdown"></div>
     </div>
     <div class="header">
-        <h1><a class="dashboard-brand" href="/" aria-label="Crabigator home">${brandLogoSvg}${brandCrabSvg}</a><span class="dashboard-label">Dashboard</span></h1>
-        <button class="refresh-btn" onclick="loadSessions()" aria-label="Refresh sessions" title="Refresh sessions"><span class="header-control-label">↻ Refresh</span></button>
-        <div class="filter-indicator" id="filter-indicator">
-            <span class="filter-text">Viewing 1 session</span>
-            <button class="filter-clear" onclick="clearSessionFilter()" title="Show all sessions">✕</button>
-        </div>
-        <div class="sessions-container">
-            <button class="pr-board-btn active" id="session-list-btn" onclick="showSessionList()" title="Session list">List</button>
-            <button class="pr-board-btn" id="pr-board-btn" onclick="togglePrBoard()" title="Cross-session PR board">
-                <span class="pr-board-btn-icon">⑆</span> PRs
-            </button>
-            <button class="pr-board-btn" id="conductor-btn" onclick="showConductor()">Conductor</button>
-            <button class="sessions-btn" id="sessions-btn" aria-label="Loading sessions" aria-busy="true" aria-expanded="false" aria-haspopup="true">
-                <span class="sessions-count" id="sessions-count">Loading</span>
-                <span class="sessions-label">sessions</span>
-            </button>
-        </div>
-        <div class="style-container">
-            <button class="style-btn" id="style-btn" aria-label="Style" title="Style" onclick="toggleStylePopover()">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="3"/>
-                    <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
-                </svg>
-                <span class="header-control-label">Style</span>
-            </button>
-            <div class="style-popover" id="style-popover">
-                <div class="style-section">
-                    <div class="style-section-label">Text size</div>
-                    <div class="font-size-control">
-                        <button class="font-size-btn decrease" onclick="adjustFontSize(-1)" title="Smaller">A</button>
-                        <div class="font-size-value" id="font-label">100%</div>
-                        <button class="font-size-btn increase" onclick="adjustFontSize(1)" title="Larger">A</button>
+        <div class="header-main">
+            <h1><a class="dashboard-brand" href="/" aria-label="Crabigator home">${brandLogoSvg}${brandCrabSvg}</a><span class="dashboard-label">Dashboard</span></h1>
+            <button class="refresh-btn" onclick="loadSessions()" aria-label="Refresh sessions" title="Refresh sessions"><span class="header-control-label">↻ Refresh</span></button>
+            <div class="filter-indicator" id="filter-indicator">
+                <span class="filter-text">Viewing 1 session</span>
+                <button class="filter-clear" onclick="clearSessionFilter()" title="Show all sessions">✕</button>
+            </div>
+            <div class="sessions-container">
+                <button class="pr-board-btn active" id="session-list-btn" onclick="showSessionList()" title="Session list">List</button>
+                <button class="pr-board-btn" id="pr-board-btn" onclick="togglePrBoard()" title="Cross-session PR board">
+                    <span class="pr-board-btn-icon">⑆</span> PRs
+                </button>
+                <button class="pr-board-btn" id="conductor-btn" onclick="showConductor()">Conductor</button>
+                <button class="sessions-btn" id="sessions-btn" aria-label="Loading sessions" aria-busy="true" aria-expanded="false" aria-haspopup="true">
+                    <span class="sessions-count" id="sessions-count">Loading</span>
+                    <span class="sessions-label">sessions</span>
+                </button>
+            </div>
+            <div class="settings-container">
+                <button class="settings-btn" id="settings-btn" aria-label="Account" title="Account" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings-popover" onclick="toggleSettingsPopover()">
+                    ${iconPerson}
+                    <span class="header-control-label">Account</span>
+                </button>
+                <div class="settings-popover" id="settings-popover" role="dialog" aria-labelledby="account-title" tabindex="-1">
+                    <div class="account-head">
+                        <h2 id="account-title">Account</h2>
+                        <button type="button" class="vp-done" onclick="closeSettingsPopover(true)">Done</button>
                     </div>
-                </div>
-                <div class="style-section">
-                    <div class="style-section-label">Terminal height</div>
-                    <div class="font-size-control">
-                        <button class="font-size-btn decrease" onclick="adjustTerminalHeight(-1)" title="Shorter">−</button>
-                        <div class="font-size-value" id="height-label">350px</div>
-                        <button class="font-size-btn increase" onclick="adjustTerminalHeight(1)" title="Taller">+</button>
-                    </div>
-                </div>
-                <div class="style-section">
-                    <div class="style-section-label">Text wrap</div>
-                    <div class="style-options">
-                        <button class="style-option active" data-wrap="wrap" onclick="setTerminalWrap(true)">Wrap</button>
-                        <button class="style-option" data-wrap="scroll" onclick="setTerminalWrap(false)">Scroll</button>
-                    </div>
-                </div>
-                <div class="style-section">
-                    <div class="style-section-label">Widgets</div>
-                    <div class="style-options">
-                        <button class="style-option active" data-widgets="expanded" onclick="setWidgetsExpanded(true)">Expanded</button>
-                        <button class="style-option" data-widgets="collapsed" onclick="setWidgetsExpanded(false)">Collapsed</button>
-                    </div>
-                </div>
-                <div class="style-section">
-                    <div class="style-section-label">Group by computer</div>
-                    <div class="style-options">
-                        <button class="style-option" data-computer-grouping="true" onclick="setGroupByComputer(true)">On</button>
-                        <button class="style-option" data-computer-grouping="false" onclick="setGroupByComputer(false)">Off — single list</button>
-                    </div>
-                </div>
-                <div class="style-section">
-                    <div class="style-section-label">Projects</div>
-                    <div class="style-options">
-                        <button class="style-option active" data-grouping="all" onclick="setGrouping('all')">All</button>
-                        <button class="style-option" data-grouping="project" onclick="setGrouping('project')">By Project</button>
-                    </div>
-                </div>
-                <div class="style-section" id="project-order-section" style="display:none">
-                    <div class="style-section-label">Project order</div>
-                    <div class="style-options">
-                        <button class="style-option active" data-project-order="recent" onclick="setProjectOrder('recent')">Most Recent</button>
-                        <button class="style-option" data-project-order="alpha" onclick="setProjectOrder('alpha')">Alphabetical</button>
-                    </div>
-                </div>
-                <div class="style-section">
-                    <div class="style-section-label">Visible sections</div>
-                    <div class="sidebar-checkbox-list">
-                        <label class="sidebar-checkbox"><input type="checkbox" id="section-recap" onchange="toggleSection('recap')" checked><span class="sidebar-checkbox-icon" style="color:#22d3ee">◈</span><span class="sidebar-checkbox-label">Recap</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="section-prs" onchange="toggleSection('prs')" checked><span class="sidebar-checkbox-icon" style="color:#a371f7">⇄</span><span class="sidebar-checkbox-label">Pull requests</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="section-commits" onchange="toggleSection('commits')" checked><span class="sidebar-checkbox-icon" style="color:#db6d28">●</span><span class="sidebar-checkbox-label">Commits</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="section-git" onchange="toggleSection('git')" checked><span class="sidebar-checkbox-icon" style="color:#7ee787">⎇</span><span class="sidebar-checkbox-label">Git status</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="section-changes" onchange="toggleSection('changes')" checked><span class="sidebar-checkbox-icon" style="color:#ec4899">Δ</span><span class="sidebar-checkbox-label">Changes</span></label>
-                    </div>
+                    <section class="account-group" id="subscription-section" hidden>
+                        <h3>Subscription</h3>
+                        <div class="account-card">
+                            <p class="account-text">Crabigator is now free. This account still has a paid subscription; cancel it any time.</p>
+                            <button type="button" class="account-row manage-subscription-link" onclick="openSubscriptionPortal()">
+                                <span>Manage subscription</span>
+                                ${iconChevronRight}
+                            </button>
+                        </div>
+                    </section>
+                    <section class="account-group" id="account-logins-section">
+                        <h3>Sign-in</h3>
+                        <div class="account-card">
+                            <p class="account-text" id="account-logins-status">Pairing code only. Connect GitHub or Google to use the same account on MCP.</p>
+                            <div id="account-identities" class="account-identities"></div>
+                            <div class="account-connect-row" id="account-connect-row"></div>
+                        </div>
+                    </section>
+                    <section class="account-group" id="mcp-section">
+                        <h3>Devices and agents</h3>
+                        <div class="account-card">
+                            <button type="button" class="account-row account-action" id="generate-invite-btn" onclick="generateInviteCode()">Pair another device</button>
+                            <div id="invite-result" class="invite-result"></div>
+                            <div class="account-block">
+                                <span>Connect an agent with MCP</span>
+                                <code id="mcp-url"></code>
+                                <a href="/mcp-tools">Tools and examples</a>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="account-group">
+                        <h3>This device</h3>
+                        <div class="account-card">
+                            <div class="account-block">
+                                <span>This browser</span>
+                                <span class="account-muted" id="account-device-meta"></span>
+                            </div>
+                            <a class="account-row" href="/privacy">Privacy policy</a>
+                            <button type="button" class="account-row account-danger" onclick="confirmUnpair()">Unpair this device</button>
+                        </div>
+                    </section>
+                    <p class="account-note">Nothing here changes how a screen looks. Use View on the List, the PR board or an open session for that.</p>
                 </div>
             </div>
         </div>
-        <div class="settings-container">
-            <button class="settings-btn" id="settings-btn" aria-label="Account" title="Account" onclick="toggleSettingsPopover()">
-                <svg viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M8 8a3 3 0 100-6 3 3 0 000 6zm2-3a2 2 0 11-4 0 2 2 0 014 0zm4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4zm-1-.004c0-.246-.178-.987-.985-1.728C11.267 10.564 9.95 10 8 10s-3.267.564-4.015 1.268C3.178 12.01 3 12.75 3 12.996h10z"/>
-                </svg>
-                <span class="header-control-label">Account</span>
-            </button>
-            <div class="settings-popover" id="settings-popover">
-                <div class="settings-section" id="subscription-section" hidden>
-                    <div class="settings-section-label">Subscription</div>
-                    <p class="settings-description">Crabigator is now free. This account still has a paid subscription; cancel it any time.</p>
-                    <button class="manage-subscription-link" onclick="openSubscriptionPortal()">
-                        Manage subscription
-                        ${iconChevronRight}
-                    </button>
-                </div>
-                <div class="settings-divider" id="subscription-divider" hidden></div>
-                <div class="settings-section" id="account-logins-section">
-                    <div class="settings-section-label">Sign-in</div>
-                    <p class="settings-description" id="account-logins-status">Pairing code only. Connect GitHub or Google to use the same account on MCP.</p>
-                    <div id="account-identities" class="account-identities"></div>
-                    <div class="account-connect-row" id="account-connect-row"></div>
-                </div>
-                <div class="settings-divider"></div>
-                <div class="settings-section" id="mcp-section">
-                    <div class="settings-section-label">MCP</div>
-                    <p class="settings-description">Connect Claude, Cursor, Grok, or another agent to this account. Sign in with GitHub or Google when the client opens a browser.</p>
-                    <p class="settings-description"><code id="mcp-url"></code></p>
-                    <p class="settings-description"><a href="/mcp-tools">See every tool and example output</a></p>
-                </div>
-                <div class="settings-divider"></div>
-                <div class="settings-section">
-                    <div class="settings-section-label">Pair another device</div>
-                    <p class="settings-description">Generate a code to pair another phone, tablet, or browser.</p>
-                    <button class="settings-action-btn" id="generate-invite-btn" onclick="generateInviteCode()">
-                        Generate pairing code
-                    </button>
-                    <div id="invite-result" class="invite-result"></div>
-                </div>
-                <div class="settings-divider"></div>
-                <div class="settings-section">
-                    <div class="settings-section-label">This device</div>
-                    <p class="settings-description">Removes access from this browser. You'll need a new pairing code to reconnect.</p>
-                    <button class="settings-danger-btn" onclick="clearPairing()">
-                        Unpair this device
-                    </button>
-                </div>
-            </div>
+        <div class="filter-bar" id="filter-bar" hidden>
+            <div class="filter-chips" id="filter-chips" role="group" aria-label="Which sessions are shown"></div>
+            <button type="button" class="view-btn" id="view-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="view-panel" onclick="toggleViewPanel('auto', this)" title="How this view looks">${iconSliders}<span>View</span></button>
         </div>
     </div>
     <div class="dashboard-layout" id="dashboard-layout" data-sidebar-position="left">
         <div class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <span class="sidebar-title">Sessions</span>
-                <button class="sidebar-settings-btn" onclick="toggleSidebarSettings()" title="Sidebar settings">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
-                        <circle cx="12" cy="12" r="3"/>
-                        <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
-                    </svg>
-                    Settings
-                </button>
-                <button class="sidebar-pin-btn" id="sidebar-pin-btn" onclick="pinSidebar()" title="Pin as sidebar">
-                    <svg viewBox="0 0 256 256" fill="currentColor" width="12" height="12"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,56H80V200H40ZM216,200H96V56H216V200Z"/></svg>
+                <button class="sidebar-pin-btn" id="sidebar-pin-btn" onclick="pinSidebar()" title="Keep the session list open beside the List">
+                    ${iconSidebar}
                     Sidebar
                 </button>
                 <button class="sidebar-close-btn" id="sidebar-close-btn" onclick="closeSidebar()" title="Hide sidebar">✕</button>
-            </div>
-            <div class="sidebar-settings-popover" id="sidebar-settings-popover">
-                <div class="sidebar-settings-section">
-                    <div class="sidebar-settings-label">Position</div>
-                    <div class="style-options">
-                        <button class="style-option sb-opt-position" data-position="left" onclick="setSidebarPosition('left')">Left</button>
-                        <button class="style-option sb-opt-position" data-position="right" onclick="setSidebarPosition('right')">Right</button>
-                    </div>
-                </div>
-                <div class="sidebar-settings-section">
-                    <div class="sidebar-settings-label">Density</div>
-                    <div class="style-options">
-                        <button class="style-option sb-opt-density" data-density="compact" onclick="setSidebarDensity('compact')">Compact</button>
-                        <button class="style-option sb-opt-density" data-density="comfortable" onclick="setSidebarDensity('comfortable')">Comfortable</button>
-                    </div>
-                </div>
-                <div class="sidebar-settings-section">
-                    <div class="sidebar-settings-label">Click action</div>
-                    <div class="style-options">
-                        <button class="style-option sb-opt-click" data-click="focus" onclick="setSessionClickAction('focus')">Focus</button>
-                        <button class="style-option sb-opt-click" data-click="scroll" onclick="setSessionClickAction('scroll')">Scroll</button>
-                    </div>
-                </div>
-                <div class="sidebar-settings-section">
-                    <div class="sidebar-settings-label">Visible stats</div>
-                    <div class="sidebar-checkbox-list">
-                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-sessionTime" onchange="toggleSidebarStat('sessionTime')"><span class="sidebar-checkbox-icon" style="color:#58a6ff">◉</span><span class="sidebar-checkbox-label">Session time</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-thinkingTime" onchange="toggleSidebarStat('thinkingTime')"><span class="sidebar-checkbox-icon" style="color:#3fb950">◐</span><span class="sidebar-checkbox-label">Thinking time</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-prompts" onchange="toggleSidebarStat('prompts')"><span class="sidebar-checkbox-icon" style="color:#8b949e">⟩</span><span class="sidebar-checkbox-label">Prompt count</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-promptRecency" onchange="toggleSidebarStat('promptRecency')"><span class="sidebar-checkbox-icon" style="color:#8b949e">◷</span><span class="sidebar-checkbox-label">Last prompt</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-completions" onchange="toggleSidebarStat('completions')"><span class="sidebar-checkbox-icon" style="color:#8b949e">⋖</span><span class="sidebar-checkbox-label">Completion count</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-completionRecency" onchange="toggleSidebarStat('completionRecency')"><span class="sidebar-checkbox-icon" style="color:#8b949e">◷</span><span class="sidebar-checkbox-label">Last completion</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-tools" onchange="toggleSidebarStat('tools')"><span class="sidebar-checkbox-icon" style="color:#f0883e">⚒</span><span class="sidebar-checkbox-label">Tools</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-compactions" onchange="toggleSidebarStat('compactions')"><span class="sidebar-checkbox-icon" style="color:#e879f9">⊜</span><span class="sidebar-checkbox-label">Compactions</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-context" onchange="toggleSidebarStat('context')"><span class="sidebar-checkbox-icon" style="color:#5fafff">◔</span><span class="sidebar-checkbox-label">Context</span></label>
-                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-flow" onchange="toggleSidebarStat('flow')"><span class="sidebar-checkbox-icon" style="color:#d7af5f">▞</span><span class="sidebar-checkbox-label">Flow scene</span></label>
-                    </div>
-                </div>
             </div>
             <div class="sidebar-content" id="sidebar-content"></div>
             <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
         </div>
         <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
         <div class="container" id="sessions" data-layout="1" data-grouping="all"></div>
+        <div class="filter-note" id="filter-note" role="status" hidden></div>
+        <div id="sessions-parked" hidden></div>
         <div class="pr-board" id="pr-board-view" hidden></div>
         <section id="conductor-view" hidden aria-label="Conductor"></section>
     </div>
+    <div class="chip-menu" id="chip-menu" role="menu" hidden></div>
+    <div class="view-panel" id="view-panel" role="dialog" tabindex="-1" popover="manual"></div>
 
     <script>${dashboardJs}</script>
 </body>

@@ -68,6 +68,8 @@ export const utilsJs = `
                 container.style.columnCount = '';
             }
             updateFilterIndicator();
+            // The single-session view has no filter bar.
+            renderFilterBar();
         }
 
         function setSessionFocus(sessionId, options = {}) {

@@ -1,5 +1,5 @@
 // Dashboard JavaScript - session
-import { iconMicrophone, iconKeyboard, iconClose, iconPencil } from '../icons';
+import { iconMicrophone, iconKeyboard, iconClose, iconPencil, iconSliders } from '../icons';
 
 export const sessionJs = `
         let hasLoadedSessionsOnce = false;
@@ -367,17 +367,39 @@ export const sessionJs = `
             }
         }
 
+        // The stats strip on an open session's drawer handle. The View
+        // panel draws its sample strip from the same markup.
+        function statsStripHtml(id) {
+            const stat = (stats, tooltip, color, glyph, inner) => '<span class="wh-stat' + (stats === 'tools' ? ' wh-tools' : '')
+                + '" data-card-stats="' + stats + '" data-tooltip="' + tooltip + '"><span class="wh-icon" style="color:' + color + '">'
+                + glyph + '</span>' + inner + '</span>';
+            const value = (key, text, stats) => '<span class="wh-value"' + (stats ? ' data-card-stats="' + stats + '"' : '')
+                + ' id="widgets-' + key + '-' + id + '">' + text + '</span>';
+            const age = (key, stats) => '<span class="wh-elapsed"' + (stats ? ' data-card-stats="' + stats + '"' : '')
+                + ' id="widgets-' + key + '-elapsed-' + id + '"></span>';
+            return stat('sessionTime', 'Session', '#58a6ff', '◉', value('session', '--'))
+                + stat('thinkingTime', 'Thinking', '#3fb950', '◐', value('thinking', '—'))
+                + '<span class="wh-stat" id="widgets-idle-wrapper-' + id + '" style="display:none" data-tooltip="Idle">'
+                + '<span class="wh-icon" style="color:#8b949e">◌</span>' + value('idle', '—') + '</span>'
+                + stat('prompts promptRecency', 'Prompts', '#8b949e', '⟩', value('prompts', '0', 'prompts') + age('prompts', 'promptRecency'))
+                + stat('completions completionRecency', 'Completions', '#8b949e', '⋖', value('completions', '0', 'completions') + age('completions', 'completionRecency'))
+                + stat('tools', 'Tool calls', '#f0883e', '⚒', value('tools', '—'))
+                + stat('compactions', 'Compactions', '#e879f9', '⊜', value('compactions', '0') + age('compactions'))
+                + stat('context', 'Context', '#8b949e', '◔', value('context', '—'));
+        }
+
         function sessionHeaderHtml(session, expanded) {
             return \`
                 <div class="session-header">
                     <button class="session-info session-heading-button" onclick="toggleCollapse('\${session.id}')" aria-expanded="\${expanded}">
                         <span class="title-row"><span id="title-mark-\${session.id}"></span><span class="title" id="title-\${session.id}"></span></span>
                         <span class="generated-title" id="generated-title-\${session.id}"></span>
-                        <span class="session-context"><span class="cwd"></span><span class="branch" id="branch-\${session.id}"></span><span class="session-row-stats"></span></span>
-                        <span class="session-row-recap"></span>
+                        <span class="session-context"><span class="row-computer"></span><span class="cwd"></span><span class="branch" id="branch-\${session.id}"></span></span>
+                        <span class="session-row-lines"></span>
                     </button>
                     <div class="session-actions">
-                        \${expanded ? \`<button class="info-btn" id="info-btn-\${session.id}" onclick="toggleInfoPopover('\${session.id}')" title="Session info">ⓘ</button>
+                        \${expanded ? \`<button type="button" class="view-btn session-view-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="view-panel" onclick="toggleViewPanel('session', this)" title="How an open session looks">${iconSliders}<span>View</span></button>
+                        <button class="info-btn" id="info-btn-\${session.id}" onclick="toggleInfoPopover('\${session.id}')" title="Session info">ⓘ</button>
                         <span class="pin-indicator pinned" id="pin-\${session.id}" title="Auto-scroll enabled">⇣</span>\` : ''}
                         <span class="state \${session.state}" id="state-\${session.id}">\${session.state}</span>
                         <button class="collapse-btn" id="collapse-btn-\${session.id}" onclick="toggleCollapse('\${session.id}')" title="\${expanded ? 'Collapse session' : 'Expand session'}" aria-expanded="\${expanded}">\${expanded ? '⌄' : '›'}</button>
@@ -470,14 +492,7 @@ export const sessionJs = `
                                     <button class="collapse-btn" id="widgets-btn-\${session.id}" title="Toggle Git & Changes widgets">▼</button>
                                 </div>
                                 <div class="widgets-header-row2">
-                                    <span class="wh-stat" data-card-stats="sessionTime" data-tooltip="Session"><span class="wh-icon" style="color:#58a6ff">◉</span><span class="wh-value" id="widgets-session-\${session.id}">--</span></span>
-                                    <span class="wh-stat" data-card-stats="thinkingTime" data-tooltip="Thinking"><span class="wh-icon" style="color:#3fb950">◐</span><span class="wh-value" id="widgets-thinking-\${session.id}">—</span></span>
-                                    <span class="wh-stat" id="widgets-idle-wrapper-\${session.id}" style="display:none" data-tooltip="Idle"><span class="wh-icon" style="color:#8b949e">◌</span><span class="wh-value" id="widgets-idle-\${session.id}">—</span></span>
-                                    <span class="wh-stat" data-card-stats="prompts promptRecency" data-tooltip="Prompts"><span class="wh-icon" style="color:#8b949e">⟩</span><span class="wh-value" data-card-stats="prompts" id="widgets-prompts-\${session.id}">0</span><span class="wh-elapsed" data-card-stats="promptRecency" id="widgets-prompts-elapsed-\${session.id}"></span></span>
-                                    <span class="wh-stat" data-card-stats="completions completionRecency" data-tooltip="Completions"><span class="wh-icon" style="color:#8b949e">⋖</span><span class="wh-value" data-card-stats="completions" id="widgets-completions-\${session.id}">0</span><span class="wh-elapsed" data-card-stats="completionRecency" id="widgets-completions-elapsed-\${session.id}"></span></span>
-                                    <span class="wh-stat wh-tools" data-card-stats="tools" data-tooltip="Tool calls"><span class="wh-icon" style="color:#f0883e">⚒</span><span class="wh-value" id="widgets-tools-\${session.id}">—</span></span>
-                                    <span class="wh-stat" data-card-stats="compactions" data-tooltip="Compactions"><span class="wh-icon" style="color:#e879f9">⊜</span><span class="wh-value" id="widgets-compactions-\${session.id}">0</span><span class="wh-elapsed" id="widgets-compactions-elapsed-\${session.id}"></span></span>
-                                    <span class="wh-stat" data-card-stats="context" data-tooltip="Context"><span class="wh-icon" style="color:#8b949e">◔</span><span class="wh-value" id="widgets-context-\${session.id}">—</span></span>
+                                    \${statsStripHtml(session.id)}
                                     <span class="wh-git" id="widgets-git-\${session.id}"></span>
                                 </div>
                             </div>

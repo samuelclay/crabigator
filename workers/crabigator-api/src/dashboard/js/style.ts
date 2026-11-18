@@ -16,8 +16,6 @@ export const styleJs = `
             isChangingFontSize = true;
 
             document.documentElement.style.setProperty('--font-scale', scale);
-            const label = document.getElementById('font-label');
-            if (label) label.textContent = Math.round(scale * 100) + '%';
 
             // Scroll pinned sessions to bottom after zoom
             requestAnimationFrame(() => {
@@ -46,8 +44,6 @@ export const styleJs = `
 
         function applyTerminalHeight() {
             const height = TERMINAL_HEIGHTS[currentHeightIndex];
-            const label = document.getElementById('height-label');
-            if (label) label.textContent = height + 'px';
 
             // Apply height directly to all terminal elements
             document.querySelectorAll('.terminal').forEach(terminal => {
@@ -129,8 +125,8 @@ export const styleJs = `
             applyTerminalWrap();
             applyWidgetsExpanded();
             applyGrouping();
-            applyProjectOrder();
             applySectionVisibility();
+            renderViewPanel();
         }
 
         // Session-card section visibility (recap, PRs, commits, git status, changes)
@@ -145,12 +141,6 @@ export const styleJs = `
             document.body.classList.toggle('hide-section-recap', !visibleSections.recap);
             document.body.classList.toggle('hide-section-prs', !visibleSections.prs);
             document.body.classList.toggle('hide-section-git', !visibleSections.git);
-
-            // Sync checkbox states in the Style popover
-            for (const [section, visible] of Object.entries(visibleSections)) {
-                const cb = document.getElementById('section-' + section);
-                if (cb) cb.checked = visible;
-            }
 
             // Commits and changes render inside the Changes widget, which sizes
             // its header from the data, so re-render it for every session.
@@ -168,12 +158,6 @@ export const styleJs = `
         }
 
         function applyTerminalWrap() {
-            // Update button states
-            document.querySelectorAll('[data-wrap]').forEach(btn => {
-                const isWrap = btn.getAttribute('data-wrap') === 'wrap';
-                btn.classList.toggle('active', isWrap === terminalWrapEnabled);
-            });
-
             // Toggle scroll-mode class on all terminals
             document.querySelectorAll('.terminal').forEach(terminal => {
                 terminal.classList.toggle('scroll-mode', !terminalWrapEnabled);
@@ -190,12 +174,6 @@ export const styleJs = `
         }
 
         function applyWidgetsExpanded() {
-            // Update button states in style popover
-            document.querySelectorAll('[data-widgets]').forEach(btn => {
-                const isExpanded = btn.getAttribute('data-widgets') === 'expanded';
-                btn.classList.toggle('active', isExpanded === widgetsExpanded);
-            });
-
             // Apply to all session cards
             document.querySelectorAll('.session-card').forEach(card => {
                 card.classList.toggle('widgets-collapsed', !widgetsExpanded);
@@ -203,52 +181,12 @@ export const styleJs = `
             });
         }
 
-        // Style popover
-        function toggleStylePopover() {
-            const popover = document.getElementById('style-popover');
-            const btn = document.getElementById('style-btn');
-            const isVisible = popover.classList.toggle('visible');
-            btn.classList.toggle('active', isVisible);
-        }
-
-        function closeStylePopover() {
-            const popover = document.getElementById('style-popover');
-            const btn = document.getElementById('style-btn');
-            popover.classList.remove('visible');
-            btn.classList.remove('active');
-        }
-
-        // Close popover when clicking outside
+        // Close the per-project "new session" menus on a click elsewhere.
         document.addEventListener('click', (e) => {
-            const stylePopover = document.getElementById('style-popover');
-            const styleBtn = document.getElementById('style-btn');
-            const settingsPopover = document.getElementById('settings-popover');
-            const settingsBtn = document.getElementById('settings-btn');
-            const sidebarSettingsPopover = document.getElementById('sidebar-settings-popover');
-            const sidebarSettingsBtn = document.querySelector('.sidebar-settings-btn');
-
-            if (stylePopover && styleBtn && !stylePopover.contains(e.target) && !styleBtn.contains(e.target)) {
-                closeStylePopover();
-            }
-            if (settingsPopover && settingsBtn && !settingsPopover.contains(e.target) && !settingsBtn.contains(e.target)) {
-                closeSettingsPopover();
-            }
-            if (sidebarSettingsPopover && sidebarSettingsBtn && !sidebarSettingsPopover.contains(e.target) && !sidebarSettingsBtn.contains(e.target)) {
-                closeSidebarSettings();
-            }
             if (!e.target.closest('.spawn-menu, .project-add-btn')) {
                 closeSpawnMenus();
             }
         });
-
-        // Session grouping mode
-        function setGrouping(mode) {
-            groupingMode = mode;
-            localStorage.setItem('crabigator-grouping', mode);
-            applyGrouping();
-            // Re-render the session list to apply grouping
-            rerenderSessions();
-        }
 
         // FNV-1a over the normalized computer name, shared with the native clients.
         function computerColor(name) {
@@ -259,9 +197,18 @@ export const styleJs = `
             return colors[hash % colors.length];
         }
 
-        function setGroupByComputer(enabled) {
-            groupByComputer = enabled;
-            localStorage.setItem('crabigator-group-by-computer', String(enabled));
+        // The Group by picker. The List can group by computer, by project or
+        // by both. The PR board only groups by computer (it always groups by
+        // time and repository), so there the project choice is left alone.
+        function setGroupBy(choice, scope) {
+            const next = groupByPrefs(choice);
+            groupByComputer = next.byComputer;
+            localStorage.setItem('crabigator-group-by-computer', String(groupByComputer));
+            if (scope !== 'board') {
+                groupingMode = next.projectMode;
+                localStorage.setItem('crabigator-grouping', groupingMode);
+                saveSettingsToServer();
+            }
             applyGrouping();
             rerenderSessions();
             if (prBoardVisible) renderPrBoard();
@@ -269,38 +216,15 @@ export const styleJs = `
 
         function applyGrouping() {
             const container = document.getElementById('sessions');
-            const effectiveGroupingMode = getMainGroupingMode();
-            container.dataset.grouping = effectiveGroupingMode;
-            document.querySelectorAll('[data-computer-grouping]').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.computerGrouping === String(groupByComputer));
-            });
-
-            // Update button states
-            document.querySelectorAll('[data-grouping]').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.grouping === groupingMode);
-            });
-
-            // Show/hide project order section based on grouping mode
-            const projectOrderSection = document.getElementById('project-order-section');
-            if (projectOrderSection) {
-                projectOrderSection.style.display = effectiveGroupingMode === 'project' ? '' : 'none';
-            }
+            container.dataset.grouping = getMainGroupingMode();
         }
 
-        // Project ordering mode (when grouped by project)
+        // Project order when the List is grouped by project.
         function setProjectOrder(mode) {
             projectOrderMode = mode;
             localStorage.setItem('crabigator-project-order', mode);
-            applyProjectOrder();
-            // Re-render the session list to apply ordering
+            saveSettingsToServer();
             rerenderSessions();
-        }
-
-        function applyProjectOrder() {
-            // Update button states
-            document.querySelectorAll('[data-project-order]').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.projectOrder === projectOrderMode);
-            });
         }
 
         let viewedSessionId = null;
@@ -523,10 +447,22 @@ export const styleJs = `
             if (!isPaired) return;
 
             preservePageScroll(() => {
+                // Rows outside the filter bar's choices wait in a hidden
+                // holder: they keep their card, so nothing has to be rebuilt
+                // when the filters change or a session becomes active again.
+                const shown = listSessionsInFilter();
+                const parked = document.getElementById('sessions-parked');
+                for (const [id, sessionData] of sessions) {
+                    const card = sessionData.element;
+                    if (!shown.has(id) && parked && card.parentElement !== parked && !card.closest('#pr-board-view')) {
+                        parked.appendChild(card);
+                    }
+                }
+                lastListFilterSignature = [...shown.keys()].join(' ');
                 if (getMainGroupingMode() === 'project') {
                 // Collect all device names across sessions
                 const allDevices = new Set();
-                for (const [, sessionData] of sessions) {
+                for (const [, sessionData] of shown) {
                     allDevices.add(sessionData.deviceName || 'Unknown');
                 }
                 const multiDevice = groupByComputer && allDevices.size > 1;
@@ -535,7 +471,7 @@ export const styleJs = `
                     // Device > Project > Sessions hierarchy
                     // Build deviceGroups: deviceName -> Map<cwd, { sessions[], mostRecentTime }>
                     const deviceGroups = new Map();
-                    for (const [id, sessionData] of sessions) {
+                    for (const [id, sessionData] of shown) {
                         const card = document.getElementById('session-' + id);
                         if (!card) continue;
                         const cwd = sessionData.cwd || card.querySelector('.cwd')?.textContent || 'Unknown';
@@ -582,7 +518,7 @@ export const styleJs = `
                 } else {
                     // Single device — flat project grouping (no device headers)
                     const groups = new Map();
-                    for (const [id, sessionData] of sessions) {
+                    for (const [id, sessionData] of shown) {
                         const card = document.getElementById('session-' + id);
                         if (!card) continue;
                         const cwd = sessionData.cwd || card.querySelector('.cwd')?.textContent || 'Unknown';
@@ -625,7 +561,7 @@ export const styleJs = `
                 // Flat mode - extract cards from groups if needed and append directly
                 // Combined lists show recent activity first; grouped lists keep their start order.
                 const sessionList = [];
-                for (const [id, sessionData] of sessions) {
+                for (const [id, sessionData] of shown) {
                     const card = document.getElementById('session-' + id);
                     if (card) {
                         sessionList.push({ id, card, device: sessionData.deviceName || 'Unknown', startedAt: sessionData.startedAt || 0, activityAt: getSessionActivityTime(sessionData) });
@@ -661,6 +597,11 @@ export const styleJs = `
                 updateFitLayout();
                 if (prBoardVisible) mountBoardTerminals();
                 restoreSessionFullscreen();
+                // A row names its computer unless a computer heading sits above it.
+                for (const id of shown.keys()) updateSessionHeaderContext(id);
+                // Sessions exist but the filters hide them all: the note says so.
+                if (shown.size === 0 && sessions.size > 0) container.querySelector('.no-sessions')?.remove();
+                updateFilterNote();
                 if (typeof scheduleSidebarUpdate === 'function') {
                     scheduleSidebarUpdate();
                 }
@@ -940,23 +881,6 @@ export const styleJs = `
             });
         }
 
-        // Settings popover
-        function toggleSettingsPopover() {
-            const popover = document.getElementById('settings-popover');
-            const btn = document.getElementById('settings-btn');
-            const isVisible = popover.classList.toggle('visible');
-            btn.classList.toggle('active', isVisible);
-            // Close style popover if open
-            if (isVisible) closeStylePopover();
-        }
-
-        function closeSettingsPopover() {
-            const popover = document.getElementById('settings-popover');
-            const btn = document.getElementById('settings-btn');
-            if (popover) popover.classList.remove('visible');
-            if (btn) btn.classList.remove('active');
-        }
-
         async function generateInviteCode() {
             const btn = document.getElementById('generate-invite-btn');
             const result = document.getElementById('invite-result');
@@ -998,7 +922,7 @@ export const styleJs = `
                 result.classList.add('visible');
             } finally {
                 btn.disabled = false;
-                btn.textContent = 'Generate pairing code';
+                btn.textContent = 'Pair another device';
             }
         }
 

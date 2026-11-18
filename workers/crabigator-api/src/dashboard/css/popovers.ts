@@ -1,149 +1,6 @@
-// Style popover, settings popover, sessions popover, invite result
+// Account button, sessions popover, invite result
 export const popoversCss = `
-/* Style popover button */
-.style-btn {
-    font-family: var(--font-ui);
-    background: transparent;
-    border: 1px solid var(--border-dim);
-    padding: 8px 14px;
-    color: var(--text-dim);
-    cursor: pointer;
-    font-size: 11px;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    transition: all 0.2s;
-    text-transform: none;
-    letter-spacing: 0;
-}
-@media (hover: hover) and (pointer: fine) {
-.style-btn:hover {
-    border-color: var(--accent-cyan);
-    color: var(--accent-cyan);
-    background: rgba(34, 211, 238, 0.05);
-}
-}
-.style-btn.active {
-    border-color: var(--accent-cyan);
-    color: var(--accent-cyan);
-    background: rgba(34, 211, 238, 0.1);
-    box-shadow: none;
-}
-.style-btn svg { width: 14px; height: 14px; }
-
-/* Style popover */
-.style-popover {
-    display: none;
-    position: absolute;
-    top: calc(100% + 10px);
-    right: 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border-dim);
-    border-radius: 12px;
-    padding: 18px;
-    min-width: 240px;
-    box-shadow: 0 12px 32px rgba(0,0,0,.25);
-    z-index: 200;
-}
-.style-popover.visible { display: block; }
-.style-section {
-    margin-bottom: 18px;
-}
-.style-section:last-child { margin-bottom: 0; }
-.style-section-label {
-    font-family: var(--font-ui);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-mid);
-    text-transform: none;
-    letter-spacing: 0;
-    margin-bottom: 10px;
-}
-.style-options {
-    display: flex;
-    gap: 0;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-dim);
-    border-radius: 6px;
-    overflow: hidden;
-}
-.style-option {
-    font-family: var(--font-ui);
-    flex: 1;
-    background: transparent;
-    border: none;
-    padding: 10px 12px;
-    color: var(--text-dim);
-    cursor: pointer;
-    font-size: 11px;
-    font-weight: 500;
-    border-right: 1px solid var(--border-dim);
-    transition: all 0.2s;
-}
-.style-option:last-child { border-right: none; }
-@media (hover: hover) and (pointer: fine) {
-.style-option:hover {
-    background: var(--bg-card);
-    color: var(--text-mid);
-}
-}
-.style-option.active {
-    background: var(--accent-peach);
-    color: var(--bg-abyss);
-    font-weight: 700;
-}
-.font-size-control {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-.font-size-btn {
-    font-family: var(--font-ui);
-    background: var(--bg-surface);
-    border: 1px solid var(--border-dim);
-    width: 38px;
-    height: 38px;
-    border-radius: 6px;
-    color: var(--text-mid);
-    cursor: pointer;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-}
-@media (hover: hover) and (pointer: fine) {
-.font-size-btn:hover {
-    border-color: var(--accent-cyan);
-    color: var(--accent-cyan);
-    background: rgba(34, 211, 238, 0.05);
-}
-}
-.font-size-btn:active {
-    background: var(--accent-peach);
-    color: var(--bg-abyss);
-    border-color: transparent;
-}
-.font-size-btn.decrease { font-size: 12px; }
-.font-size-btn.increase { font-size: 18px; }
-.font-size-value {
-    flex: 1;
-    text-align: center;
-    font-family: var(--font-ui);
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-bright);
-    background: var(--bg-abyss);
-    padding: 10px;
-    border-radius: 6px;
-    border: 1px solid var(--border-dim);
-}
-.style-container {
-    position: relative;
-}
-
-/* Settings button and popover */
+/* The Account button. Its popover is styled in view-panel.ts. */
 .settings-container {
     position: relative;
 }
@@ -163,109 +20,7 @@ export const popoversCss = `
     text-transform: none;
     letter-spacing: 0;
 }
-@media (hover: hover) and (pointer: fine) {
-.settings-btn:hover {
-    border-color: var(--accent-magenta);
-    color: var(--accent-magenta);
-    background: rgba(232, 121, 249, 0.05);
-}
-}
-.settings-btn.active {
-    border-color: var(--accent-magenta);
-    color: var(--accent-magenta);
-    background: rgba(232, 121, 249, 0.1);
-    box-shadow: none;
-}
 .settings-btn svg { width: 14px; height: 14px; }
-.settings-popover {
-    display: none;
-    position: absolute;
-    top: calc(100% + 10px);
-    right: 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border-dim);
-    border-radius: 12px;
-    padding: 20px;
-    min-width: 300px;
-    box-shadow: 0 12px 32px rgba(0,0,0,.25);
-    z-index: 200;
-}
-.settings-popover.visible { display: block; }
-.settings-section {
-    margin-bottom: 0;
-}
-.settings-section-label {
-    font-family: var(--font-ui);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-bright);
-    margin-bottom: 8px;
-}
-.settings-description {
-    font-size: 12px;
-    color: var(--text-dim);
-    margin-bottom: 14px;
-    line-height: 1.5;
-}
-.settings-description code {
-    color: var(--accent-cyan);
-    font-family: var(--font-ui);
-    font-size: 11px;
-    word-break: break-all;
-}
-.settings-divider {
-    height: 1px;
-    background: var(--border-dim);
-    margin: 20px 0;
-}
-.settings-action-btn {
-    font-family: var(--font-ui);
-    width: 100%;
-    background: var(--accent-peach);
-    border: none;
-    padding: 12px 18px;
-    color: var(--bg-abyss);
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 700;
-    border-radius: 8px;
-    transition: all 0.2s;
-    text-transform: none;
-    letter-spacing: 0;
-}
-@media (hover: hover) and (pointer: fine) {
-.settings-action-btn:hover {
-    transform: none;
-    box-shadow: none;
-}
-}
-.settings-action-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
-}
-.settings-danger-btn {
-    font-family: var(--font-ui);
-    width: 100%;
-    background: transparent;
-    border: 1px solid rgba(248, 113, 113, 0.4);
-    padding: 10px 18px;
-    color: var(--accent-red);
-    cursor: pointer;
-    font-size: 11px;
-    border-radius: 6px;
-    transition: all 0.2s;
-    text-transform: none;
-    letter-spacing: 0;
-}
-@media (hover: hover) and (pointer: fine) {
-.settings-danger-btn:hover {
-    background: rgba(248, 113, 113, 0.1);
-    border-color: var(--accent-red);
-    box-shadow: 0 0 15px rgba(248, 113, 113, 0.2);
-}
-}
 
 /* Sessions popover container: PR board button + sessions button in a row */
 .sessions-container {
@@ -466,31 +221,14 @@ export const popoversCss = `
 .session-item-state.permission { background: rgba(251, 146, 60, 0.2); color: var(--accent-orange); }
 .session-item-state.question { background: rgba(167, 139, 250, 0.2); color: var(--accent-purple); }
 .session-item-state.complete { background: rgba(100, 116, 139, 0.15); color: var(--text-dim); }
-.session-item-stats {
+.session-item-lines {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 2px;
-    font-family: var(--font-ui);
-    font-size: 9px;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 3px;
+    min-width: 0;
 }
-.session-item-stats.dim {
-    opacity: 0.3;
-}
-.si-stat {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    color: var(--text-mid);
-}
-.si-icon {
-    font-size: 8px;
-}
-.si-elapsed {
-    color: var(--text-dim);
-    font-size: 8px;
-    margin-left: 1px;
-}
+.session-item-lines .row-line { font-size: 10px; }
 .sessions-empty {
     padding: 24px 16px;
     text-align: center;
@@ -498,17 +236,6 @@ export const popoversCss = `
     font-family: var(--font-ui);
     font-size: 11px;
 }
-@media (max-width: 768px) {
-    .style-popover,
-    .settings-popover {
-        max-height: calc(100vh - var(--header-height, 46px) - 16px);
-        max-height: calc(100dvh - var(--header-height, 46px) - 16px);
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        -webkit-overflow-scrolling: touch;
-    }
-}
-
 /* Invite result */
 .invite-result {
     margin-top: 14px;

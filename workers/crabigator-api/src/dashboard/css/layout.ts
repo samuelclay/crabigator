@@ -437,14 +437,12 @@ export const layoutCss = `
 .session-row { border: 1px solid #26313d; border-radius: 10px; margin-bottom: 8px; }
 .session-row .session-info { flex: 1; min-width: 0; }
 .session-row .title { font-size: 14px; font-weight: 500; white-space: normal; overflow-wrap: anywhere; }
-.session-row .cwd, .session-row-recap { display: block; font-size: 11px; color: #8b949e; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-row .cwd { display: block; font-size: 11px; color: #8b949e; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prb-row > .session-card { margin: 12px 0; font-family: var(--font-family, system-ui); }
 .pr-board > .session-card { margin: 16px 0; }
 .session-card:not(.session-row) .collapse-btn { min-width: 44px; min-height: 44px; }
 @media (max-width: 600px) {
-    .session-row-stats { font-size: 10px; }
     .session-card:not(.session-row) .terminal { height: 55dvh; min-height: 220px; max-height: 600px; }
-    .session-row-recap { max-width: 55vw; }
     .prb-row > .session-card { max-width: 100%; }
 }
 `;

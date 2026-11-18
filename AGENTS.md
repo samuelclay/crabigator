@@ -375,7 +375,7 @@ Automated browser sessions have no cookies. To authenticate:
 
 The dashboard auto-claims the code and authenticates. Codes expire in 5 minutes and can only be claimed once; the `pair` command validates cached codes and generates new ones when needed. A page snapshot after navigating should show the session list — "Setup Failed" means the code was stale, so run `crabigator pair` again.
 
-**Single-session view** - filter to one session for focused testing (hides Style/Account buttons, forces single-column layout):
+**Single-session view** - filter to one session for focused testing (hides the filter bar and its View button, forces single-column layout; the session keeps its own View button, and Account stays in the header):
 ```
 https://drinkcrabigator.com/dashboard?session=SESSION_ID
 ```

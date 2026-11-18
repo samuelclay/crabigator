@@ -81,9 +81,12 @@ export const constantsJs = `
         // Sidebar state
         let sidebarPinned = localStorage.getItem('crabigator-sidebar-pinned') === 'true'; // default false (popover mode)
         let sidebarPosition = localStorage.getItem('crabigator-sidebar-position') || 'left';
+        // Row spacing: 'compact', 'comfortable' or 'relaxed'. The key keeps its old name.
         let sidebarDensity = localStorage.getItem('crabigator-sidebar-density') || 'comfortable';
         let sidebarWidth = parseInt(localStorage.getItem('crabigator-sidebar-width') || '300', 10);
         let sessionClickAction = localStorage.getItem('crabigator-click-action') || 'scroll';
+        // The old "Visible stats" switches. They seed the three sets in
+        // view-prefs.ts the first time, and 'flow' still lives here.
         const sidebarStatsDefaults = {
             sessionTime: true,
             thinkingTime: true,
