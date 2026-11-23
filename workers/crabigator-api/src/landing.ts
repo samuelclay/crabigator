@@ -93,7 +93,7 @@ export const landingHtml = `<!DOCTYPE html>
         </section>
 
         <section class="section agent" id="claude-code" aria-labelledby="claude-code-title">
-            <h2 id="claude-code-title">Your agent, unchanged.</h2>
+            <h2 id="claude-code-title">Your CLI agent, unchanged.</h2>
             ${devicePairHtml({
                 capture: claudeCapture, command: 'claude', title: 'Fire scene night look',
                 label: 'Claude Code at work in Crabigator, editing the fire scene, with a moving train scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive and the same train scene.',
