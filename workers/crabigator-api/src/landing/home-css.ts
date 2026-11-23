@@ -183,11 +183,12 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .install-command button.copied svg { display: none; }
 .install-steps { padding-left: 22px; margin: 28px 0 0; color: var(--muted); font-size: 14px; }
 .install-steps li { padding-left: 8px; margin: 16px 0; }
-.agent-commands { margin:10px 0 0; }
-.agent-commands > div { display:grid; grid-template-columns:6em minmax(0,1fr); gap:8px; align-items:baseline; border-bottom:1px solid var(--line); padding:7px 0; }
+.agent-commands { display:grid; grid-template-columns:max-content minmax(0,1fr); column-gap:8px; margin:10px 0 0; }
+.agent-commands > div { display:grid; grid-column:1/-1; grid-template-columns:subgrid; align-items:baseline; border-bottom:1px solid var(--line); padding:7px 0; }
+.agent-commands dt { white-space:nowrap; }
 .agent-commands dd { margin:0; }
 .agent-commands code { font-size:13px; }
-@media(max-width:390px) { .agent-commands > div { grid-template-columns:minmax(0,1fr); gap:2px; } }
+@media(max-width:390px) { .agent-commands { grid-template-columns:minmax(0,1fr); } .agent-commands > div { row-gap:2px; } }
 .install-steps code { color: var(--ink); white-space: nowrap; }
 .updates { display: flex; justify-content: space-between; gap: 64px; align-items: center; padding-top: 25px; }
 .updates h2 { font-size: 26px; }
