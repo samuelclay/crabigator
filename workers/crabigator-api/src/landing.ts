@@ -1,11 +1,11 @@
 // Landing page HTML served at /
 import { faviconPath, faviconIcoPath, touchIconPath } from './assets/home-brand';
-import { heroCapture, claudeCapture } from './landing/desktop-capture';
+import { heroCapture } from './landing/desktop-capture';
 import { appModulesHtml } from './landing/app-modules';
 import { notificationPreviewHtml, notificationCss, notificationJs } from './landing/notification-preview';
 import { harborCss, harborHtml, harborJs } from './landing/harbor';
 import { surfaceCarouselCss, surfaceCarouselJs } from './landing/surface-carousel';
-import { devicePairHtml } from './landing/device-pair';
+import { sessionSwitcherHtml, sessionSwitcherCss, sessionSwitcherJs } from './landing/session-switcher';
 import { flowPlayerJs } from './landing/flow-player';
 import { claimsHtml, cardsHtml } from './landing/features';
 import { tabletPreviewHtml, webPreviewHtml, androidPreviewHtml } from './landing/product-previews';
@@ -49,7 +49,7 @@ export const landingHtml = `<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
-    <style>${mcpCss}${homeCss}${productPreviewsCss}${heroStreamCss}${notificationCss}${harborCss}${surfaceCarouselCss}</style>
+    <style>${mcpCss}${homeCss}${productPreviewsCss}${heroStreamCss}${sessionSwitcherCss}${notificationCss}${harborCss}${surfaceCarouselCss}</style>
 </head>
 <body>
     <header class="site-header">
@@ -96,10 +96,7 @@ export const landingHtml = `<!DOCTYPE html>
 
         <section class="section agent" id="claude-code" aria-labelledby="claude-code-title">
             <h2 id="claude-code-title">Your CLI agent, unchanged.</h2>
-            ${devicePairHtml({
-                capture: claudeCapture, command: 'claude', title: 'Fire scene night look',
-                label: 'Claude Code at work in Crabigator, editing the fire scene, with a moving train scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive and the same train scene.',
-            })}
+            ${sessionSwitcherHtml}
         </section>
 
         <section class="section agent" id="codex" aria-labelledby="codex-title">
@@ -180,7 +177,7 @@ ${cardsHtml}
     </footer>
     <p id="copy-status" class="sr-only" role="status"></p>
     <script>${analyticsJs}</script>
-    <script>${landingJs}${heroStreamJs}${notificationJs}${flowPlayerJs}${harborJs}${surfaceCarouselJs}</script>
+    <script>${landingJs}${heroStreamJs}${sessionSwitcherJs}${notificationJs}${flowPlayerJs}${harborJs}${surfaceCarouselJs}</script>
 </body>
 </html>`;
 

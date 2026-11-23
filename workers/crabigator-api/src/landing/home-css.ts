@@ -102,13 +102,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .section h2 > span { display: block; color: #7f8e99; }
 .agent > h2, .surfaces > h2, .ownership > h2, .extras > h2 { text-align: center; }
 .agent { padding-top: 70px; padding-bottom: 70px; }
-.device-pair.agent-pair { position: relative; display: flex; align-items: flex-end; justify-content: space-between; margin-top: 52px; }
-.desktop-frame.pair-desktop { flex: none; width: 73%; }
-.pair-phone { flex: none; width: 24%; }
-.desktop-capture, .pair-capture { font-size: calc((100cqw - 36px) / (var(--cols) * .6)); }
-.pair-capture { padding: 16px 18px; }
-.pair-phone .phone-app-bar strong { font-size: 4.4cqw; color: #65b1f7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pair-phone .phone-app-bar div { min-width: 0; }
+.desktop-capture { font-size: calc((100cqw - 36px) / (var(--cols) * .6)); }
 .tablet-frame { padding: 12px; border: 2px solid #52616b; border-radius: 30px; background: #070b0e; box-shadow: 0 20px 70px #0003; }
 .surface-tabs { display: flex; width: max-content; margin: 34px auto 0; padding: 4px; border: 1px solid var(--line); border-radius: 999px; }
 .surface-tabs[hidden] { display: none; }
@@ -208,12 +202,9 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .desktop-bar > span:last-child { display: none; }
     .window-dots { gap: 3px; }
     .window-dots i { width: 5px; height: 5px; }
-    .desktop-capture, .pair-capture { font-size: calc((100cqw - 18px) / (var(--cols) * .6)); }
+    .desktop-capture { font-size: calc((100cqw - 18px) / (var(--cols) * .6)); }
     .desktop-capture { padding: 14px 9px; }
-    .pair-capture { padding: 9px; }
-    .device-pair.agent-pair { display: block; margin-top: 36px; }
-    .desktop-frame.pair-desktop { width: 100%; }
-    .hero-phone, .pair-phone { position: relative; top: auto; right: auto; width: 44%; margin: -30% 0 0 4%; z-index: 1; }
+    .hero-phone { position: relative; top: auto; right: auto; width: 44%; margin: -30% 0 0 4%; z-index: 1; }
     .phone-frame { padding: 4px; border-radius: 18px; }
     .phone-screen { border-radius: 12px; }
     .section { padding: 60px 24px; }
