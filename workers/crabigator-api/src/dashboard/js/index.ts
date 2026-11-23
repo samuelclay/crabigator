@@ -30,6 +30,7 @@ import { pairingJs } from './pairing';
 import { subscriptionJs } from './subscription';
 import { prBoardJs } from './pr-board';
 import { sessionMarkJs } from './session-mark';
+import { modulePanelJs } from './module-panel';
 import { modulesJs } from './modules';
 import { flowJs } from './flow';
 import { initJs } from './init';
@@ -65,6 +66,7 @@ export const dashboardJs = [
     subscriptionJs,  // Must be after pairingJs (uses getAuthHeaders)
     prBoardJs,  // Must be after pairingJs and changesWidgetJs (uses getAuthHeaders, PR helpers)
     viewPanelJs,  // Must be before modulesJs: its Escape handling runs ahead of the fullscreen session's
+    modulePanelJs,
     modulesJs,
     flowJs,
     conductorJs,

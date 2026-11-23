@@ -1,5 +1,5 @@
 // Dashboard JavaScript - format
-export const formatJs = `
+export const sessionFormatJs = `
         function formatElapsed(timestamp) {
             if (!timestamp) return '';
             const now = Date.now() / 1000;
@@ -66,10 +66,13 @@ export const formatJs = `
                 case 'question': return '<span style="color:#db6d28">» ? « Ask</span>';
                 case 'complete': return '<span style="color:#bc8cff">✓ Complete</span>';
                 case 'interrupted': return '<span style="color:#f85149">⊘ Interrupted</span>';
-                default: return '<span style="color:#8b949e">○ ' + state + '</span>';
+                default: return '<span style="color:#8b949e">○ ' + escapeHtml(state) + '</span>';
             }
         }
 
+`;
+
+export const formatJs = sessionFormatJs + `
         function formatModeIndicator(mode, sessionId) {
             const modeConfig = {
                 'plan': { icon: '⏸', label: 'Plan', color: '#a371f7' },

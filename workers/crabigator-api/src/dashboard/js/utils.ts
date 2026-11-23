@@ -1,5 +1,5 @@
 // Dashboard JavaScript - utils
-export const utilsJs = `
+export const metricFormatJs = `
 
         function formatDuration(seconds) {
             if (seconds < 60) return seconds + 's';
@@ -32,6 +32,9 @@ export const utilsJs = `
             };
         }
 
+`;
+
+export const utilsJs = metricFormatJs + `
         function sessionCount(n) {
             return n + (n === 1 ? ' session' : ' sessions');
         }

@@ -81,7 +81,7 @@ export const changesWidgetJs = `
                 const channelLabel = channel ? '#' + channel : '';
                 const details = [date, channelLabel, thread.author].filter(Boolean).join(' · ');
                 const label = details ? 'Slack · ' + details : 'Slack';
-                const href = escapeHtml(thread.url);
+                const href = externalHref(thread.url);
                 const link = '<a class="slack-thread" href="' + href + '" target="_blank" rel="noopener">'
                     + escapeHtml(label) + '</a>';
                 const text = escapeHtml(String(thread.text || '').trim());
@@ -145,7 +145,7 @@ export const changesWidgetJs = `
                 if (byLanguage.length > 1) {
                     const langCount = lang.changes?.length || 0;
                     const langWord = langCount === 1 ? 'change' : 'changes';
-                    changesHtml += \`<div style="color:#db6d28;margin-top:4px;font-size:11px">\${lang.language} <span style="color:#8b949e">\${langCount} \${langWord}</span></div>\`;
+                    changesHtml += \`<div style="color:#db6d28;margin-top:4px;font-size:11px">\${escapeHtml(lang.language)} <span style="color:#8b949e">\${langCount} \${langWord}</span></div>\`;
                 }
 
                 for (const c of (lang.changes || [])) {
@@ -157,8 +157,8 @@ export const changesWidgetJs = `
                     const scopeHtml = nameParts.length
                         ? \`<span class="name-scope">\${escapeHtml(nameParts.join(' › '))} › </span>\`
                         : '';
-                    const del = c.deletions || 0;
-                    const add = c.additions || 0;
+                    const del = Number(c.deletions) || 0;
+                    const add = Number(c.additions) || 0;
 
                     // Build deletion number (right-aligned)
                     const delNumStr = del > 0 ? '−' + del : '';
@@ -452,8 +452,8 @@ export const changesWidgetJs = `
             if (!pr.checks_total) return '';
             const cls = pr.checks_failed > 0 ? 'fail' : pr.checks_pending > 0 ? 'pending' : 'pass';
             const label = pr.checks_failed > 0
-                ? '✗' + pr.checks_failed + ' CI'
-                : pr.checks_pending > 0 ? '●' + pr.checks_pending + ' CI' : '✓ CI';
+                ? '✗' + Number(pr.checks_failed) + ' CI'
+                : pr.checks_pending > 0 ? '●' + Number(pr.checks_pending) + ' CI' : '✓ CI';
             return prExternalLink(pr.ci_url, 'pr-ci ' + cls, label);
         }
 
@@ -461,7 +461,7 @@ export const changesWidgetJs = `
         // conversation is settled or the PR is no longer open.
         function prCommentsBadge(pr) {
             if (!pr.unresolved_comments) return '';
-            return prExternalLink(pr.comments_url, 'pr-comments', '💬' + pr.unresolved_comments);
+            return prExternalLink(pr.comments_url, 'pr-comments', '💬' + Number(pr.unresolved_comments));
         }
 
         // Review approval state, open PRs only: ✓ approved, ✗ changes
@@ -481,9 +481,13 @@ export const changesWidgetJs = `
         }
 
         // A badge that opens a GitHub page when one is known, else plain text.
+        function externalHref(url) {
+            return typeof url === 'string' && /^https?:\\/\\//i.test(url) ? escapeHtml(url) : '';
+        }
+
         function prExternalLink(url, className, innerHtml) {
             if (!url) return '<span class="' + className + '">' + innerHtml + '</span>';
-            return '<a class="' + className + '" href="' + escapeHtml(url)
+            return '<a class="' + className + '" href="' + externalHref(url)
                 + '" target="_blank" rel="noopener noreferrer">' + innerHtml + '</a>';
         }
 
@@ -606,12 +610,12 @@ export const changesWidgetJs = `
         }
 
         function officialChangesTitleHtml(pr) {
-            const ident = '<span class="changes-pr-num">#' + pr.number + '</span>: '
+            const ident = '<span class="changes-pr-num">#' + Number(pr.number) + '</span>: '
                 + escapeHtml(String(pr.title || '').trim());
             if (!pr.url) {
                 return '<span>' + ident + '</span>';
             }
-            return '<a class="changes-pr-ident" href="' + escapeHtml(pr.url)
+            return '<a class="changes-pr-ident" href="' + externalHref(pr.url)
                 + '" target="_blank" rel="noopener">' + ident + '</a>';
         }
 
@@ -660,7 +664,7 @@ export const changesWidgetJs = `
         }
 
         function paintSessionTitleMark(sessionId) {
-            const html = sessionMarkChipHtml({ id: sessionId });
+            const html = sessionMarkChipHtml(sessions.get(sessionId)?.session_mark ? sessions.get(sessionId) : { id: sessionId });
             const header = document.getElementById('title-mark-' + sessionId);
             if (header) header.innerHTML = html;
             const widgets = document.getElementById('widgets-mark-' + sessionId);
@@ -745,12 +749,18 @@ export const changesWidgetJs = `
                 updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
             }
             scheduleSidebarUpdate();
-            const widget = document.getElementById('recap-prs-' + sessionId);
-            if (!widget) return;
             if (!prOverridesLoadStarted) {
                 prOverridesLoadStarted = true;
                 loadPrOverrides();
             }
+            renderPrList(sessionId, prs);
+        }
+
+        function renderPrList(sessionId, prs) {
+            const widget = document.getElementById('recap-prs-' + sessionId);
+            if (!widget) return;
+            const sessionData = sessions.get(sessionId);
+            const editable = !sessionData?.readOnly;
             // Collapsed by default: only primary PRs. Clicking the header
             // reveals the secondary PRs too. Every row shows full detail
             // (PR title + branch) in both states.
@@ -765,6 +775,7 @@ export const changesWidgetJs = `
             if (visible.length === 0) {
                 widget.style.display = 'none';
                 widget.innerHTML = '';
+                widget.readOnlyPrMarkup = '';
                 return;
             }
 
@@ -789,21 +800,22 @@ export const changesWidgetJs = `
                         + '>' + stateInfo.label + '</span>'
                     : '';
                 const diffParts = [];
-                if (pr.additions) diffParts.push('<span class="rd-add">+' + pr.additions + '</span>');
-                if (pr.deletions) diffParts.push('<span class="rd-del">-' + pr.deletions + '</span>');
+                if (pr.additions) diffParts.push('<span class="rd-add">+' + Number(pr.additions) + '</span>');
+                if (pr.deletions) diffParts.push('<span class="rd-del">-' + Number(pr.deletions) + '</span>');
                 const files = pr.changed_files
-                    ? '<span class="pr-files">' + pr.changed_files + (pr.changed_files === 1 ? ' file' : ' files') + '</span>'
+                    ? '<span class="pr-files">' + Number(pr.changed_files) + (pr.changed_files === 1 ? ' file' : ' files') + '</span>'
                     : '';
                 // The diff cluster opens the PR's Files-changed tab.
                 const diff = (diffParts.length || files)
                     ? prExternalLink(pr.url ? pr.url + '/files' : '', 'pr-diff',
                         diffParts.join(' ') + (diffParts.length && files ? ' ' : '') + files)
                     : '';
-                const link = '<a class="pr-link" href="' + escapeHtml(pr.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(repoLabel) + '</a>';
+                const link = '<a class="pr-link" href="' + externalHref(pr.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(repoLabel) + '</a>';
                 const isPrimary = disposition(pr) === 'primary';
-                const star = '<span class="pr-primary-toggle ' + (isPrimary ? 'primary' : 'secondary')
-                    + '" title="' + (isPrimary ? 'Primary — click to make secondary' : 'Secondary — click to make primary')
-                    + '">' + (isPrimary ? '★' : '☆') + '</span>';
+                const starTitle = isPrimary ? 'Primary' : 'Secondary';
+                const starAction = editable ? (isPrimary ? ' — click to make secondary' : ' — click to make primary') : '';
+                const star = '<span class="pr-star' + (editable ? ' pr-primary-toggle' : '')
+                    + '" title="' + starTitle + starAction + '">' + (isPrimary ? '★' : '☆') + '</span>';
                 // ↑ promotes a secondary PR, ↓ demotes a primary — the same
                 // flip as the star, placed beside the dismiss.
                 const flip = '<span class="pr-flip" title="' + (isPrimary ? 'Make secondary' : 'Make primary')
@@ -815,7 +827,7 @@ export const changesWidgetJs = `
                 // Right-hand status cluster: state, CI, merge cleanliness, then
                 // the promote/demote and dismiss actions.
                 const status = '<span class="pr-status">' + badge + prCiBadge(pr)
-                    + prCommentsBadge(pr) + prReviewBadge(pr) + prMergeBadge(pr) + flip + dismiss + '</span>';
+                    + prCommentsBadge(pr) + prReviewBadge(pr) + prMergeBadge(pr) + (editable ? flip + dismiss : '') + '</span>';
 
                 const secondary = isPrimary ? '' : ' pr-secondary';
                 const branch = pr.branch
@@ -831,9 +843,17 @@ export const changesWidgetJs = `
 
             const chevron = expanded ? '▾' : '▸';
             const titleAttr = expanded ? 'Click to collapse' : 'Click to expand';
-            widget.innerHTML = '<div class="pr-list-title" title="' + titleAttr + '">'
+            const markup = '<div class="pr-list-title" title="' + titleAttr + '">'
                 + '<span class="pr-list-chevron">' + chevron + '</span>Pull requests '
                 + '<span class="pr-list-count">' + label + '</span></div>' + rows;
+            // A shared session polls for stats too. Keep focus on an unchanged PR link.
+            if (!editable && widget.readOnlyPrMarkup === markup) return;
+            widget.innerHTML = markup;
+            widget.style.display = '';
+            if (!editable) {
+                widget.readOnlyPrMarkup = markup;
+                return;
+            }
             // Attach handlers via JS (avoids escaping quotes inside the outer
             // template literal, which broke an inline onclick).
             // Every tap stops here: the session card behind this section has
@@ -866,7 +886,6 @@ export const changesWidgetJs = `
                     rerenderAllPrLists();
                 };
             });
-            widget.style.display = '';
         }
 
         setInterval(() => {

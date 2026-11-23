@@ -41,7 +41,7 @@ export async function sharedSession(request: Request, env: Env, params: Record<s
     }
     if (!url.pathname.endsWith('/data')) {
         return new Response(sharedSessionHtml, { headers: { ...privateHeaders, 'Content-Type': 'text/html; charset=utf-8',
-            'Content-Security-Policy': "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" } });
+            'Content-Security-Policy': "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" } });
     }
     const internal = new URL('https://internal/shared-view');
     for (const key of ['generation', 'cursor']) internal.searchParams.set(key, url.searchParams.get(key) || '');

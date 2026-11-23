@@ -1,3 +1,4 @@
+import { dashboardFonts } from './dashboard/fonts';
 import { faviconPath, faviconIcoPath, touchIconPath } from './assets/home-brand';
 // Dashboard HTML served at /dashboard
 import { dashboardCss } from './dashboard/css';
@@ -26,9 +27,7 @@ export const dashboardHtml = `<!DOCTYPE html>
     <link rel="icon" type="image/svg+xml" href="${faviconPath}">
     <link rel="icon" href="${faviconIcoPath}" sizes="16x16 32x32 48x48">
     <link rel="apple-touch-icon" href="${touchIconPath}" sizes="192x192">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=DM+Sans:wght@400;500;600;700&display=swap">
+    ${dashboardFonts}
     <style>${dashboardCss}</style>
 </head>
 <body>

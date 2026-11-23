@@ -16,8 +16,8 @@ export const gitWidgetJs = `
             let maxDel = 0;
             let maxAdd = 0;
             for (const f of files) {
-                maxDel = Math.max(maxDel, f.deletions || 0);
-                maxAdd = Math.max(maxAdd, f.additions || 0);
+                maxDel = Math.max(maxDel, Number(f.deletions) || 0);
+                maxAdd = Math.max(maxAdd, Number(f.additions) || 0);
             }
             // Width for number columns: sign + digits
             const delNumWidth = maxDel > 0 ? 1 + digitCount(maxDel) : 0;
@@ -80,7 +80,7 @@ export const gitWidgetJs = `
 
             // Compact display for clean repos - just header, no body
             if (totalFiles === 0) {
-                const newHtml = \`<div class="widget-title"><span style="color:#7ee787">\${branch}</span> <span style="color:#3fb950">✓ Clean</span></div>\`;
+                const newHtml = \`<div class="widget-title"><span style="color:#7ee787">\${escapeHtml(branch)}</span> <span style="color:#3fb950">✓ Clean</span></div>\`;
                 if (widget.innerHTML !== newHtml) {
                     widget.innerHTML = newHtml;
                 }
@@ -96,8 +96,8 @@ export const gitWidgetJs = `
 
             let filesHtml = files.map(f => {
                 const { icon, color } = getStatusIcon(f.status);
-                const del = f.deletions || 0;
-                const add = f.additions || 0;
+                const del = Number(f.deletions) || 0;
+                const add = Number(f.additions) || 0;
 
                 // 4-column layout: [del num] [bars] [add num]
                 // Build deletion number (right-aligned)
@@ -127,13 +127,13 @@ export const gitWidgetJs = `
 
                 return \`<div class="git-file">
                     <span style="color:\${color}">\${icon}</span>
-                    <span class="path">\${f.path}</span>
+                    <span class="path">\${escapeHtml(f.path)}</span>
                     <span class="diff">\${delNumHtml}\${barsHtml}\${addNumHtml}</span>
                 </div>\`;
             }).join('');
 
             const newHtml = \`
-                <div class="widget-title"><span style="color:#7ee787">\${branch}</span> <span style="float:right">\${headerRight}</span></div>
+                <div class="widget-title"><span style="color:#7ee787">\${escapeHtml(branch)}</span> <span style="float:right">\${headerRight}</span></div>
                 <div class="git-files">\${filesHtml}</div>
             \`;
 
@@ -156,8 +156,8 @@ export const gitWidgetJs = `
                 return;
             }
 
-            const totalAdds = files.reduce((sum, f) => sum + (f.additions || 0), 0);
-            const totalDels = files.reduce((sum, f) => sum + (f.deletions || 0), 0);
+            const totalAdds = files.reduce((sum, f) => sum + (Number(f.additions) || 0), 0);
+            const totalDels = files.reduce((sum, f) => sum + (Number(f.deletions) || 0), 0);
 
             let parts = [];
             if (totalAdds > 0) parts.push('<span class="green">+' + totalAdds + '</span>');

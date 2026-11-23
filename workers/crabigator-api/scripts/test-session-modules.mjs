@@ -73,6 +73,10 @@ test('a short roster recap keeps its turn number without duplicating history', (
     const regenerated = entries({ recapHistory: history, recap: { latest: { prompt_count: 10, generated_at: 3000, headline: 'Updated' } } });
     assert.equal(regenerated.length, 2);
     assert.equal(regenerated[0].headline, 'Updated');
+    const archived = entries({ recapHistory: [{ headline: 'Archived', generated_at: 1700000000 }],
+        recap: { latest: { headline: 'Archived', generated_at: 1700000000000 } } });
+    assert.equal(archived.length, 1);
+    assert.equal(archived[0].generated_at, 1700000000000);
 });
 
 test('computer colors stay consistent across clients and hostname spellings', () => {

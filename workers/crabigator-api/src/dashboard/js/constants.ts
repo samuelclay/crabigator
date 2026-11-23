@@ -1,3 +1,4 @@
+import { spinnerJs } from './spinner';
 // Dashboard JavaScript - constants
 import { FONT_SCALES, TERMINAL_HEIGHTS } from '../steps';
 
@@ -109,18 +110,4 @@ export const constantsJs = `
             // Keep defaults when an old or manually edited preference is invalid.
         }
 
-        // Spinner frames for thinking indicator
-        const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-        let spinnerFrameIndex = 0;
-
-        // Start the global spinner animation
-        setInterval(() => {
-            const spinners = document.querySelectorAll('.thinking-spinner');
-            if (spinners.length === 0) return;
-            spinnerFrameIndex = (spinnerFrameIndex + 1) % SPINNER_FRAMES.length;
-            const frame = SPINNER_FRAMES[spinnerFrameIndex];
-            spinners.forEach(el => {
-                el.textContent = frame;
-            });
-        }, 80);
-`;
+` + spinnerJs;

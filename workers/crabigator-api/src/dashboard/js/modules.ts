@@ -18,6 +18,7 @@ export const modulesJs = `
             metrics.prepend(state);
             header.setAttribute('role', 'button');
             header.tabIndex = 0;
+            header.onclick = () => toggleWidgets(sessionId);
             header.setAttribute('aria-label', 'Session summary: show or hide modules');
             header.setAttribute('aria-controls', 'widgets-content-' + sessionId);
             header.onkeydown = event => {
@@ -74,19 +75,24 @@ export const modulesJs = `
             flowBox.setAttribute('aria-hidden', 'true');
             flowBox.appendChild(document.createElement('canvas'));
             drawer.append(rows, flowBox);
-            applySessionCardStatsVisibility(drawer);
+            if (!sessions.get(sessionId)?.readOnly) applySessionCardStatsVisibility(drawer);
             const recap = document.getElementById('recap-' + sessionId);
-            recap.removeAttribute('onclick');
-            recap.removeAttribute('title');
-            recap.classList.add('expanded');
+            if (recap) {
+                recap.removeAttribute('onclick');
+                recap.removeAttribute('title');
+                recap.classList.add('expanded');
+            }
             panel.prepend(drawer);
-            const fullscreen = document.createElement('button');
-            fullscreen.className = 'fullscreen-session-btn';
-            fullscreen.type = 'button'; fullscreen.textContent = '⛶';
-            fullscreen.title = 'Fullscreen terminal';
-            fullscreen.setAttribute('aria-label', 'Fullscreen terminal');
-            fullscreen.onclick = () => toggleSessionFullscreen(sessionId);
-            card.querySelector('.session-actions').prepend(fullscreen);
+            const actions = card.querySelector('.session-actions');
+            if (actions) {
+                const fullscreen = document.createElement('button');
+                fullscreen.className = 'fullscreen-session-btn';
+                fullscreen.type = 'button'; fullscreen.textContent = '⛶';
+                fullscreen.title = 'Fullscreen terminal';
+                fullscreen.setAttribute('aria-label', 'Fullscreen terminal');
+                fullscreen.onclick = () => toggleSessionFullscreen(sessionId);
+                actions.prepend(fullscreen);
+            }
             const terminal = document.getElementById('terminal-' + sessionId);
             const resize = new ResizeObserver(entries => {
                 fitSummaryAges(sessionId);
@@ -128,6 +134,10 @@ export const modulesJs = `
             const entries = [];
             [...(data.recapHistory || []), data.recap?.latest].forEach(entry => {
                 if (!entry?.headline?.trim() || /completed the turn without captured transcript output/i.test(entry.headline)) return;
+                // Some archived snapshots use Unix seconds instead of milliseconds.
+                if (entry.generated_at > 0 && entry.generated_at < 1e11) {
+                    entry = { ...entry, generated_at: entry.generated_at * 1000 };
+                }
                 const index = entries.findIndex(previous =>
                     (entry.prompt_count != null && previous.prompt_count === entry.prompt_count)
                     || (entry.generated_at && previous.generated_at === entry.generated_at));

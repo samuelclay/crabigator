@@ -288,14 +288,14 @@ body.hide-section-prs .session-prs { display: none !important; }
 }
 /* Primary/secondary toggle: ★ purple for the PR being worked on, ☆ gray for
    the rest. Click flips the disposition for the whole device group. */
-.session-prs .pr-primary-toggle {
+.session-prs .pr-star {
     font-size: 12px;
-    cursor: pointer;
+    color: #c4a7f7;
     flex: 0 0 auto;
     user-select: none;
 }
-.session-prs .pr-primary-toggle.primary { color: #c4a7f7; }
-.session-prs .pr-primary-toggle.secondary { color: #6e7681; }
+.session-prs .pr-secondary .pr-star { color: #6e7681; }
+.session-prs .pr-primary-toggle { cursor: pointer; }
 @media (hover: hover) and (pointer: fine) {
 .session-prs .pr-primary-toggle:hover { color: #d6bffb; }
 }
@@ -323,7 +323,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     white-space: nowrap;
 }
 /* Secondary rows recede so primaries read first. */
-.session-prs .pr-row:has(.pr-primary-toggle.secondary) .pr-link { color: #8b949e; }
+.session-prs .pr-secondary .pr-link { color: #8b949e; }
 @media (hover: hover) and (pointer: fine) {
 .session-prs .pr-link:hover {
     text-decoration: underline;

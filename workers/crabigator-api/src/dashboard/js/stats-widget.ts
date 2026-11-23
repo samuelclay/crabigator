@@ -59,7 +59,7 @@ export const statsWidgetJs = `
             const isIdleState = ['complete', 'question', 'interrupted'].includes(session?.state);
             if (idleWrapper && idleEl) {
                 if (isIdleState && stats.idle_since) {
-                    const idleSecs = Math.floor(Date.now() / 1000 - stats.idle_since);
+                    const idleSecs = Math.floor((session?.endedAt || Date.now() / 1000) - stats.idle_since);
                     if (idleSecs >= 60) {
                         idleWrapper.style.display = '';
                         idleEl.textContent = formatDuration(idleSecs);
@@ -80,7 +80,7 @@ export const statsWidgetJs = `
                 toolsEl.innerHTML = renderToolsSparkline(
                     stats.tool_timestamps,
                     stats.session_start,
-                    Date.now() / 1000,
+                    session?.endedAt || Date.now() / 1000,
                     compactTools ? 8 : 20
                 );
             }
