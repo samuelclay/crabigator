@@ -33,6 +33,18 @@ export const iconGift = `<svg viewBox="0 0 256 256"><path d="M216,72H180.92c.39-
 export const iconChevronRight = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l6 5-6 5"/></svg>`;
 export const iconChevronDown = `<svg class="icon-chevron-down" viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2 4l4 4l4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
+// Terminal toggles. The second stroke changes with the wrapping or following state.
+export const iconWrap = `<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M3 4.5h14M3 9h10.5"/>
+    <path class="toggle-on" d="M13.5 9a3 3 0 0 1 0 6H9m2.5-2.5L9 15l2.5 2.5"/>
+    <path class="toggle-off" d="M13.5 9H17M3 14h10"/>
+</svg>`;
+export const iconFollow = `<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M3.5 16.5h13"/>
+    <path class="toggle-on" d="M10 3.5v9m-3.5-3.5 3.5 3.5 3.5-3.5"/>
+    <path class="toggle-off" d="M7.5 4.5v7m5-7v7"/>
+</svg>`;
+
 // Sliders, for the View button. The knobs take the button's own background.
 export const iconSliders = `<svg class="icon-sliders" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M2 4.5h12M2 11.5h12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="6" cy="4.5" r="2" stroke="currentColor" stroke-width="1.6"/><circle cx="10.5" cy="11.5" r="2" stroke="currentColor" stroke-width="1.6"/></svg>`;
 

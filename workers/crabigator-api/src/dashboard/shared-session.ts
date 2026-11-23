@@ -1,4 +1,4 @@
-import { brandCrabSvg, brandLogoSvg } from './icons';
+import { brandCrabSvg, brandLogoSvg, iconFollow, iconWrap } from './icons';
 import { headerCss } from './css/header';
 import { viewPanelCss } from './css/view-panel';
 import { dashboardFonts } from './fonts';
@@ -46,8 +46,15 @@ body.shared-dashboard {margin:0; padding:0; height:100vh; height:100dvh; display
 .shared-dashboard .session-info {max-height:18dvh; overflow:auto}
 .shared-dashboard .session-context {display:flex}
 .shared-dashboard .session-actions {align-self:center; flex-wrap:wrap}
-.shared-dashboard .filter-chip[aria-pressed="true"] {border-color:var(--vp-accent); color:var(--vp-accent)}
 .shared-dashboard .filter-chip:active {background:var(--vp-accent-tint)}
+.terminal-toggles {display:inline-flex; align-items:center; padding:2px; gap:2px; background:var(--vp-well); border:1px solid var(--vp-line); border-radius:12px}
+.terminal-toggle {display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:32px; padding:0 9px; border:1px solid transparent; border-radius:9px; background:transparent; color:var(--vp-muted); font:600 12px var(--font-ui); cursor:pointer; transition:background .18s, color .18s, border-color .18s}
+.terminal-toggle[aria-pressed="true"] {background:var(--vp-accent-tint); color:var(--vp-ink); border-color:var(--border-dim)}
+.terminal-toggle[aria-pressed="true"] svg {color:var(--vp-accent)}
+.terminal-toggle svg path {transition:opacity .16s, transform .22s cubic-bezier(.22,1,.36,1)}
+.terminal-toggle[aria-pressed="true"] .toggle-off, .terminal-toggle[aria-pressed="false"] .toggle-on {opacity:0; transform:translateY(-2px)}
+@media (hover:hover) and (pointer:fine) { .terminal-toggle:hover {color:var(--text-bright); border-color:var(--border-glow)} }
+@media (pointer:coarse) { .terminal-toggle {min-height:44px} }
 #share {font-family:'JetBrains Mono',monospace}
 #banner {flex:none; background:#303135; color:var(--accent-peach); border-bottom:1px solid #685344; padding:6px 14px; font-size:12px}
 #session-view {display:flex; flex:1; flex-direction:column; min-height:0}
@@ -64,7 +71,10 @@ body.shared-dashboard {margin:0; padding:0; height:100vh; height:100dvh; display
 <div class="session-info" id="shared-heading"></div>
 <div class="session-actions" role="toolbar" aria-label="Terminal display">
 <button class="filter-chip" id="smaller" aria-label="Decrease font size">A−</button><button class="filter-chip" id="larger" aria-label="Increase font size">A+</button>
-<button class="filter-chip" id="wrap" aria-pressed="true">Wrap</button><button class="filter-chip" id="pin" aria-pressed="true">Follow</button><span class="state" id="status" role="status">Connecting…</span></div>
+<div class="terminal-toggles">
+<button type="button" class="terminal-toggle" id="wrap" aria-pressed="true" aria-controls="terminal-view" title="Wrap long lines to fit the terminal">${iconWrap}Wrap</button>
+<button type="button" class="terminal-toggle" id="pin" aria-pressed="true" aria-controls="terminal-view" title="Keep the latest terminal output in view">${iconFollow}Follow</button>
+</div><span class="state" id="status" role="status">Connecting…</span></div>
 </section>
 <main id="session-view" aria-label="Session terminal and details">
 <div class="terminal scroll-active" id="terminal-view" tabindex="0" role="region" aria-label="Terminal scrollback"><div class="terminal-scrollback" id="scrollback-view"></div><div class="terminal-screen" id="screen-view"></div></div>
