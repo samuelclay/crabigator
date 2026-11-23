@@ -92,3 +92,20 @@ test('joined HTML keeps leading spaces, styled runs, links and escaped text', ()
     assert.equal((html.match(/<span /g) || []).length, (html.match(/<\/span>/g) || []).length);
     assert.equal((html.match(/<a /g) || []).length, (html.match(/<\/a>/g) || []).length);
 });
+
+test('submitted turns have anchors while composers, options and quoted output do not', () => {
+    const rows = [
+        '\x1b[0m\x1b[38;2;238;238;238;48;2;68;68;68;2m› \x1b[22mCodex turn',
+        '\x1b[38;2;153;153;153;48;2;55;55;55m❯\x1b[2CClaude turn',
+        '\x1b[34;1m> Antigravity turn',
+        '\x1b[1m› Unsent Codex draft',
+        '\x1b[38;2;153;153;153m❯ Unsent Claude draft',
+        '\x1b[94m> Unsent Antigravity draft',
+        '  ❯ Menu choice',
+        '> npm run build',
+    ];
+    const markup = ansiToHtml(rows.join('\n'));
+    assert.equal((markup.match(/class="line prompt-row"/g) || []).length, 3);
+    const excerpt = runInNewContext(script + '\nterminalPromptExcerpt');
+    assert.deepEqual(rows.map(row => excerpt(row, false)), ['Codex turn', 'Claude turn', 'Antigravity turn', '', '', '', '', '']);
+});

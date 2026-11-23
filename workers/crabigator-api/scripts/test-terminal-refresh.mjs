@@ -51,7 +51,7 @@ for (const gesture of ['wheel', 'touch', 'keyboard', 'scrollbar']) {
         const terminal = { scrollTop: 800, scrollHeight: 1000, clientHeight: 200,
             addEventListener: (name, handler) => listeners.set(name, handler) };
         const context = { sessions: new Map([['s', data]]), activeTerminalId: 's', isChangingFontSize: false,
-            updatePinButton() {}, loadMoreScrollback() {}, activateTerminalScroll() {} };
+            bindPromptNavigation() {}, updatePinButton() {}, loadMoreScrollback() {}, activateTerminalScroll() {} };
         const bind = runInNewContext(functions(embedded('terminal'), ['bindTerminalScroll']) + '\nbindTerminalScroll', context);
         bind('s', terminal);
         if (gesture === 'wheel') listeners.get('wheel')({ deltaY: -1 });

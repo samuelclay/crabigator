@@ -180,6 +180,27 @@ async function run() {
         check(retained.isConnected && near(retained.getBoundingClientRect().top-sample.getBoundingClientRect().top,offset),'Trimming moved the surviving row');
         sample.remove();sessions.delete('reflow');
     });
+    await test('Prompt jumps cross lazy history and live output without scrolling the page', async()=>{
+        const rows=Array.from({length:150},(_,i)=>i===0?'❯ First prompt':i===95?'› Second prompt':'output '+i);
+        const pageY=window.scrollY;
+        data.pinned=true;
+        renderScrollback('test',rows);
+        preserveTerminalScroll('test',()=>{screen.innerHTML=ansiToHtml('\\x1b[48;2;68;68;68m› Third prompt\\x1b[0m\\nresponse\\n> npm run build\\n\\x1b[1m› Still typing\\x1b[0m');});
+        await frame();
+        const prev=card.querySelector('.prompt-jump.previous'), next=card.querySelector('.prompt-jump.next');
+        check(prev.title.includes('3 of 3 — Third prompt') && next.hidden,'Wrong live destination');
+        for (const expected of ['Third prompt','Second prompt','First prompt']) {
+            check(prev.title.endsWith(expected),'Wrong previous excerpt');
+            prev.click();await frame();
+        }
+        check(prev.hidden && next.title.includes('2 of 3 — Second prompt'),'Wrong first-prompt boundary');
+        next.click();await frame();
+        const destination=[...history.querySelectorAll('.prompt-row')].find(el=>el.textContent.includes('Second prompt'));
+        check(Math.abs(destination.getBoundingClientRect().top-terminal.getBoundingClientRect().top)<9,'Jump missed the destination');
+        check(!data.pinned && next.title.includes('3 of 3') && window.scrollY===pageY,'Jump moved the page or resumed Follow');
+        next.click();await frame();
+        check(next.hidden && prev.title.includes('2 of 3'),'Wrong last-prompt boundary');
+    });
     results.textContent += '\\nAll '+passed.length+' browser checks passed.';
 }
 document.getElementById('run').onclick=()=>run().catch(e=>{results.textContent+='\\nFAIL '+e.stack;});

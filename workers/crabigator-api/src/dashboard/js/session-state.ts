@@ -38,6 +38,7 @@ export const sessionStateJs = `
         }
 
         function updatePinButton(sessionId, pinned) {
+            sessions.get(sessionId)?.refreshPromptNavigation?.();
             const el = document.getElementById('pin-' + sessionId);
             if (!el) return;
             const parent = el.parentNode;
@@ -349,7 +350,7 @@ export const sessionStateJs = `
         document.addEventListener('click', (e) => {
             if (!activeTerminalId) return;
 
-            if (e.target.closest('.terminal')) return;
+            if (e.target.closest('.terminal-frame, .terminal')) return;
             if (e.target.closest('.pin-btn')) return;
             // Fullscreen scrolling stays active while using its drawer and
             // composer, so a wheel gesture can still stop following output.

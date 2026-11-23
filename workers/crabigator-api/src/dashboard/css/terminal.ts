@@ -1,5 +1,21 @@
 // Terminal, scroll mode, ANSI classes
 export const terminalCss = `
+/* Keep the navigation fixed to its own viewport, including in a multi-session grid. */
+.terminal-frame { position:relative; min-width:0; }
+.shared-dashboard .terminal-frame, .session-fullscreen .terminal-frame { display:flex; flex-direction:column; flex:1; min-height:0; }
+.prompt-jump {
+    position:absolute; right:10px; z-index:1; display:grid; grid-template-columns:auto auto;
+    justify-content:start; column-gap:8px; max-width:min(48%, 18rem); padding:5px 12px;
+    border:1px solid var(--border-dim,#374654); border-radius:14px;
+    background:#19232df5; color:var(--text-bright,#edf3f7); cursor:pointer; text-align:left;
+    font:500 12px/1.3 var(--font-ui,system-ui); box-shadow:0 2px 7px #0003;
+}
+.prompt-jump[hidden] { display:none; }
+.prompt-jump.previous { top:6px; } .prompt-jump.next { bottom:6px; }
+.prompt-jump:hover, .prompt-jump:focus-visible { border-color:var(--accent-cyan,#79c9df); }
+.prompt-count { color:var(--accent-cyan,#79c9df); font-variant-numeric:tabular-nums; }
+.prompt-excerpt { grid-column:1/-1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#b8c6d1; }
+@media(pointer:coarse) { .prompt-jump { min-height:44px; align-content:center; } }
 /* Terminal */
 .terminal {
     background: #0b1218;

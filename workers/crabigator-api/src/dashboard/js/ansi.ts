@@ -1,5 +1,29 @@
 // Dashboard JavaScript - ansi
 export const ansiJs = `
+        // Captured Claude/Codex turns shade the gutter. Their live composers and
+        // menus do not. Antigravity and legacy transcripts use a bold > marker.
+        function terminalPromptExcerpt(row, plainTranscript = true) {
+            const match = row.match(/^((?:\\x1b\\[[0-9;]*m)*)([❯›>])(.*)$/u);
+            if (!match) return '';
+            const [, style, marker, body] = match;
+            let bold = false, shaded = false;
+            for (const sequence of style.matchAll(/\\x1b\\[([0-9;]*)m/g)) {
+                const codes = sequence[1].split(';').map(Number);
+                for (let i = 0; i < codes.length; i++) {
+                    const n = codes[i];
+                    if (n === 0) { bold = false; shaded = false; }
+                    if (n === 1) bold = true;
+                    if (n === 2 || n === 22) bold = false;
+                    if (n === 49) shaded = false;
+                    if (n === 7 || n === 48 || (n >= 40 && n <= 47) || (n >= 100 && n <= 107)) shaded = true;
+                    if (n === 38 || n === 48) i += codes[i + 1] === 2 ? 4 : 2;
+                }
+            }
+            if (marker === '>' ? !bold : !(shaded || (plainTranscript && !style))) return '';
+            const plain = body.replace(/\\x1b\\[(\\d*)C/g, (_, n) => ' '.repeat(Math.min(500, Number(n) || 1))).replace(/\\x1b(?:\\[[0-?]*[ -/]*[@-~]|\\][^\\x07\\x1b]*(?:\\x07|\\x1b\\\\))/g, '');
+            return /^\\s+\\S/u.test(plain) ? Array.from(plain.trim()).slice(0, 80).join('') : '';
+        }
+
         // Same conservative boundary rules as the native terminal renderers.
         function terminalParagraphJoins(rows) {
             const trimmed = rows.map(row => row.replace(/ +$/, ''));
@@ -57,7 +81,7 @@ export const ansiJs = `
         }
 
         // ANSI to HTML converter - processes escape sequences including cursor positioning
-        function ansiToHtml(text) {
+        function ansiToHtml(text, historyRows = false) {
             if (!text) return '';
 
             // Trim trailing whitespace from each line to prevent background color bleeding
@@ -76,7 +100,9 @@ export const ansiJs = `
                 return trimmed + ansiSuffix;
             }
 
-            const paddedRows = text.split('\\n').map(row => / $/.test(row.replace(/\\x1b\\[[0-9;]*m/g, '')));
+            const sourceRows = text.split('\\n');
+            const plainTranscript = historyRows || (!text.includes('\\x1b') && !text.includes('────'));
+            const paddedRows = sourceRows.map(row => / $/.test(row.replace(/\\x1b\\[[0-9;]*m/g, '')));
             text = text.split('\\n').map(trimLineEndPreserveAnsi).join('\\n');
 
             const colors = {
@@ -380,6 +406,8 @@ export const ansiJs = `
             const joins = terminalParagraphJoins(plainRows.map((row, i) => row + (paddedRows[i] ? ' ' : '')));
             const rendered = lines.map((lineHtml, index) => {
                 const plain = plainRows[index];
+
+                if (terminalPromptExcerpt(sourceRows[index] || '', plainTranscript)) return '<div class="line prompt-row">' + lineHtml + '</div>';
 
                 // Keep repeated-character rules on one row at any client width.
                 // Preserve the full text so resizing can reveal more of the rule.

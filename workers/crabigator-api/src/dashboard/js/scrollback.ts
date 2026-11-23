@@ -10,7 +10,7 @@ export const scrollbackJs = `
 
         function scrollbackHtml(lines) {
             // Even a history consisting of one blank row must occupy a cell row.
-            return lines.length ? ansiToHtml(lines.join('\\n') || '\\x1b[0m') : '';
+            return lines.length ? ansiToHtml(lines.join('\\n') || '\\x1b[0m', true) : '';
         }
 
         function removeScrollbackRows(element, count) {
@@ -29,7 +29,7 @@ export const scrollbackJs = `
             }
         }
 
-        function loadMoreScrollback(sessionId) {
+        function loadMoreScrollback(sessionId, requestedRows = SCROLLBACK_CHUNK_SIZE) {
             const sessionData = sessions.get(sessionId);
             if (!sessionData || !sessionData.scrollbackBuffer) return;
 
@@ -44,7 +44,7 @@ export const scrollbackJs = `
             if (!scrollbackEl || !terminal) return;
 
             // Calculate how many more lines to load
-            const linesToLoad = Math.min(SCROLLBACK_CHUNK_SIZE, totalLines - alreadyRendered);
+            const linesToLoad = Math.min(requestedRows, totalLines - alreadyRendered);
             const startIdx = totalLines - alreadyRendered - linesToLoad;
             const endIdx = totalLines - alreadyRendered;
 
@@ -142,7 +142,10 @@ export const scrollbackJs = `
 
             // Once history is displayed, keep it current even while another
             // terminal is active. Unopened history remains lazy.
-            if (activeTerminalId !== sessionId && !sessionData.scrollbackRendered) return;
+            if (activeTerminalId !== sessionId && !sessionData.scrollbackRendered) {
+                sessionData.refreshPromptNavigation?.();
+                return;
+            }
 
             const scrollbackEl = document.getElementById('scrollback-' + sessionId);
             if (!scrollbackEl) return;

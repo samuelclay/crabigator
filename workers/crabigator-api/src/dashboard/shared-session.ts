@@ -101,7 +101,7 @@ initSessionModules('view');
 const terminal = el('terminal-view');
 let isChangingFontSize = false;
 function activateTerminalScroll() { flushScrollback('view'); }
-function updatePinButton(_, pinned) { el('pin').setAttribute('aria-pressed', pinned); }
+function updatePinButton(_, pinned) { el('pin').setAttribute('aria-pressed', pinned); view.refreshPromptNavigation?.(); }
 bindTerminalScroll('view', terminal);
 el('pin').onclick = () => {
     const session = sessions.get('view');
