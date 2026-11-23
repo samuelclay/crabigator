@@ -24,6 +24,7 @@ const REDIRECT_TTL = 300;
 const LIVE_DATA_TTL = 2;
 const ENDED_DATA_BROWSER_TTL = 30;
 const ENDED_DATA_EDGE_TTL = 60;
+const CLIENT_CACHE_HEADER = 'X-Share-Cache-Control';
 
 interface SharedSessionRow {
     id: string;
@@ -84,8 +85,37 @@ function parseArchiveCursor(searchParams: URLSearchParams): { generation: string
 }
 
 function cachePut(ctx: ExecutionContext | undefined, key: Request, response: Response): void {
+    // Preserve the intended browser Cache-Control across Cloudflare's edge cache,
+    // which rewrites max-age on cached hits up to the zone's Browser Cache TTL.
+    const cacheControl = response.headers.get('Cache-Control');
+    if (cacheControl && !response.headers.has(CLIENT_CACHE_HEADER)) {
+        const headers = new Headers(response.headers);
+        headers.set(CLIENT_CACHE_HEADER, cacheControl);
+        response = new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers,
+        });
+    }
     const write = caches.default.put(key, response).catch(() => {});
     if (ctx) ctx.waitUntil(write);
+}
+
+function restoreCachedResponse(cached: Response, overrideLocation?: string): Response {
+    const headers = new Headers(cached.headers);
+    const clientCacheControl = headers.get(CLIENT_CACHE_HEADER);
+    if (clientCacheControl) {
+        headers.set('Cache-Control', clientCacheControl);
+        headers.delete(CLIENT_CACHE_HEADER);
+    }
+    if (overrideLocation) {
+        headers.set('Location', overrideLocation);
+    }
+    return new Response(cached.body, {
+        status: cached.status,
+        statusText: cached.statusText,
+        headers,
+    });
 }
 
 function cacheMeta(ctx: ExecutionContext | undefined, origin: string, token: string, meta: ShareCacheMeta, ttl: number): void {
@@ -148,12 +178,10 @@ export async function sharedSession(
                 if (location) {
                     const target = new URL(location);
                     target.search = url.search;
-                    const headers = new Headers(cached.headers);
-                    headers.set('Location', target.href);
-                    return new Response(null, { status: 308, headers });
+                    return restoreCachedResponse(cached, target.href);
                 }
             }
-            return cached;
+            return restoreCachedResponse(cached);
         }
 
         const row = await findSharedSession(env, params.token);
@@ -181,7 +209,7 @@ export async function sharedSession(
     const { generation, cursor } = parseArchiveCursor(url.searchParams);
     const key = dataCacheKey(url.origin, params.token, generation, cursor);
     const cached = await caches.default.match(key);
-    if (cached) return cached;
+    if (cached) return restoreCachedResponse(cached);
 
     const metaRes = await caches.default.match(metaCacheKey(url.origin, params.token));
     const meta = metaRes ? await metaRes.json<ShareCacheMeta>() : null;
@@ -191,7 +219,7 @@ export async function sharedSession(
     if (meta && cursor > 0) {
         if (generation !== meta.generation) {
             const rootCached = await caches.default.match(dataCacheKey(url.origin, params.token, '', 0));
-            if (rootCached) return rootCached;
+            if (rootCached) return restoreCachedResponse(rootCached);
         } else if (cursor > meta.latestCursor) {
             const tailKey = dataCacheKey(
                 url.origin,
@@ -204,7 +232,7 @@ export async function sharedSession(
                 const body = await tailCached.json<Record<string, unknown>>();
                 body.history = { generation: meta.generation, after: cursor, cursor, more: false, content: '' };
                 const headers = new Headers(securityHeaders);
-                const cacheControl = tailCached.headers.get('Cache-Control');
+                const cacheControl = tailCached.headers.get(CLIENT_CACHE_HEADER) || tailCached.headers.get('Cache-Control');
                 if (cacheControl) headers.set('Cache-Control', cacheControl);
                 return Response.json(body, { headers });
             }

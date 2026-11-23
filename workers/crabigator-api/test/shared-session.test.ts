@@ -173,7 +173,22 @@ it('caches shared responses at the edge and normalizes cache-busting queries', a
 
     const endedRes2 = await SELF.fetch('https://example.com/share/' + endedId + '/data?utm_campaign=launch');
     expect(endedRes2.status).toBe(200);
+    expect(endedRes2.headers.get('Cache-Control')).toBe('public, max-age=30, s-maxage=60');
+    expect(endedRes2.headers.get('X-Share-Cache-Control')).toBeNull();
     expect((await endedRes2.json<any>()).ended).toBe(true);
+
+    // Simulate Cloudflare's zone Browser Cache TTL rewriting max-age in caches.default on HIT.
+    const dataKey = new Request('https://example.com/share/' + endedId + '/data');
+    const stored = await caches.default.match(dataKey);
+    expect(stored).toBeTruthy();
+    const rewrittenHeaders = new Headers(stored!.headers);
+    rewrittenHeaders.set('Cache-Control', 'public, max-age=14400, s-maxage=60');
+    await caches.default.put(dataKey, new Response(await stored!.text(), { status: 200, headers: rewrittenHeaders }));
+
+    const restored = await SELF.fetch('https://example.com/share/' + endedId + '/data');
+    expect(restored.status).toBe(200);
+    expect(restored.headers.get('Cache-Control')).toBe('public, max-age=30, s-maxage=60');
+    expect(restored.headers.get('X-Share-Cache-Control')).toBeNull();
 });
 
 it('keeps the same link when a desktop retries registration', async () => {

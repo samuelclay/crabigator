@@ -183,7 +183,7 @@ async function refresh() {
     try {
         const url = new URL(location.pathname + '/data', location.origin);
         url.searchParams.set('generation', generation); url.searchParams.set('cursor', cursor);
-        const response = await fetch(url, { credentials:'omit' });
+        const response = await fetch(url, { credentials:'omit', cache:'no-store' });
         if (response.status === 404) { el('status').textContent = 'Link unavailable'; return; }
         if (!response.ok) throw new Error();
         const d = await response.json();
