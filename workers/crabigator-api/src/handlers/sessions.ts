@@ -82,7 +82,6 @@ export async function createSession(
     }
 
     const sessionId = generateUUID();
-    const token = generateUUID();
     const now = Math.floor(Date.now() / 1000);
 
     // A retry or resume keeps both identities, even if two registrations overlap.
@@ -90,19 +89,19 @@ export async function createSession(
         INSERT INTO sessions (id, device_id, client_session_id, cwd, platform, pr_scope, session_mark, state, started_at, is_active, share_token)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, 1, ?)
         ON CONFLICT(device_id, client_session_id) DO UPDATE SET
-            share_token = COALESCE(sessions.share_token, excluded.share_token),
+            share_token = COALESCE(sessions.share_token, sessions.id),
             cwd = excluded.cwd, platform = excluded.platform, pr_scope = excluded.pr_scope,
             session_mark = COALESCE(excluded.session_mark, sessions.session_mark),
             state = CASE WHEN sessions.is_active = 1 THEN sessions.state ELSE 'ready' END,
             ended_at = NULL, is_active = 1, last_seen_at = excluded.started_at
-        RETURNING id, share_token
-    `).bind(sessionId, device_id, client_session_id, cwd, platform, prScope, markJson, now, token)
-        .first<{ id: string; share_token: string }>();
+        RETURNING id
+    `).bind(sessionId, device_id, client_session_id, cwd, platform, prScope, markJson, now, sessionId)
+        .first<{ id: string }>();
     if (!registered) throw new Error('Session registration returned no row');
     const ws = new URL('/api/sessions/' + registered.id + '/connect', request.url);
     ws.protocol = ws.protocol === 'https:' ? 'wss:' : 'ws:';
     const response: CreateSessionResponse = {
-        id: registered.id, ws_url: ws.href, share_url: shareUrl(request, registered.share_token),
+        id: registered.id, ws_url: ws.href, share_url: shareUrl(request, registered.id),
     };
     if (registered.id !== sessionId) return jsonResponse(response);
 
@@ -357,7 +356,7 @@ export async function getSession(
             completions_changed_at: session.completions_changed_at || undefined,
         },
         session_mark: parseStoredSessionMark(session.session_mark),
-        share_url: session.share_token ? shareUrl(request, session.share_token) : null,
+        share_url: session.share_token ? shareUrl(request, session.id) : null,
     };
     return jsonResponse(response);
 }

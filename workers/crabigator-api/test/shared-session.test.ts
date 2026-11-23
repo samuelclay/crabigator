@@ -8,7 +8,13 @@ it('serves one read-only archive by its share token after its desktop and object
     const id = crypto.randomUUID(), token = crypto.randomUUID();
     await env.DB.prepare("INSERT INTO devices (id, secret_hash, group_id) VALUES ('archive-device', 'demo', 'archive-group')").run();
     await env.DB.prepare("INSERT INTO sessions (id, share_token, cwd, platform, device_id, client_session_id) VALUES (?, ?, '/work/harbor', 'codex', 'archive-device', 'local')").bind(id, token).run();
-    const base = 'https://example.com/share/' + token;
+    const base = 'https://example.com/share/' + id;
+    const legacy = base.replace(id, token);
+    for (const suffix of ['', '/data?generation=old&cursor=3']) {
+        const redirect = await SELF.fetch(legacy + suffix, { redirect: 'manual' });
+        expect(redirect.status).toBe(308);
+        expect(redirect.headers.get('Location')).toBe(base + suffix);
+    }
     const stub = env.SESSION.get(env.SESSION.idFromName(id));
     const ws = (await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } })).webSocket!;
     ws.accept();
@@ -43,7 +49,7 @@ it('serves one read-only archive by its share token after its desktop and object
         transcript += snapshot.history.content;
     }
     expect(transcript === history).toBe(true);
-    for (const invalid of [id, id.slice(0, 8), token.slice(0, 8)]) expect((await SELF.fetch('https://example.com/share/' + invalid + '/data')).status).toBe(404);
+    for (const invalid of [crypto.randomUUID(), id.slice(0, 8), token.slice(0, 8)]) expect((await SELF.fetch('https://example.com/share/' + invalid + '/data')).status).toBe(404);
     expect((await SELF.fetch(base + '/data', { method: 'POST' })).status).toBe(404);
     for (const action of ['key', 'answer', 'share']) {
         const response = await SELF.fetch('https://example.com/api/sessions/' + id + '/' + action,
@@ -66,7 +72,7 @@ it('keeps the same link when a desktop retries registration', async () => {
     expect(registrations.map(r => r.status).sort()).toEqual([200, 201]);
     const [first, retry] = await Promise.all(registrations.map(r => r.json<{ id: string; share_url: string }>()));
     expect(first).toEqual(retry);
-    expect(first.share_url).not.toContain(first.id);
+    expect(first.share_url).toBe('https://example.com/share/' + first.id);
     const route = '/api/sessions/' + first.id + '/share';
     const owner = await SELF.fetch('https://example.com' + route, { method: 'POST',
         headers: { ...headers, 'X-Signature': await hmacSign(secret, 'POST:' + route + ':' + ts) } });
