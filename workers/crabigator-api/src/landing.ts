@@ -65,7 +65,10 @@ export const landingHtml = `<!DOCTYPE html>
         <section class="hero" aria-labelledby="hero-title">
             <div class="hero-copy">
                 <h1 id="hero-title">Take your agents with you.</h1>
-                <p class="hero-description">Claude Code, Codex, opencode, Grok, and Antigravity, live on your phone.</p>
+                <p class="hero-description">
+                    <span>${iconClaude} Claude Code,</span> <span>${iconCodex} Codex,</span> <span>${iconOpencode} OpenCode,</span>
+                    <span>${iconGrok} Grok,</span> and <span>${iconAntigravity} Antigravity,</span> streamed to your phone.
+                </p>
                 <div class="hero-start">
                     <a class="button-primary" href="#install" data-track="install_cta" data-label="hero">Install Crabigator</a>
                     <a class="button-secondary" href="/dashboard" data-track="dashboard_cta" data-label="hero">Open dashboard</a>
@@ -89,12 +92,8 @@ export const landingHtml = `<!DOCTYPE html>
             </figure>
         </section>
 
-        <div class="providers" aria-label="Works with Claude Code, Codex, opencode, Grok, and Antigravity">
-            <span>${iconClaude} Claude Code</span><span>${iconCodex} Codex</span><span>${iconOpencode} opencode</span><span>${iconGrok} Grok</span><span>${iconAntigravity} Antigravity</span>
-        </div>
-
         <section class="section agent" id="claude-code" aria-labelledby="claude-code-title">
-            <h2 id="claude-code-title">Your agent, unchanged.<span>Crabigator wraps your installed CLI. Update it as usual, and your next session uses the new version.</span></h2>
+            <h2 id="claude-code-title">Your agent, unchanged.</h2>
             ${devicePairHtml({
                 capture: claudeCapture, command: 'claude', title: 'Fire scene night look',
                 label: 'Claude Code at work in Crabigator, editing the fire scene, with a moving train scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive and the same train scene.',
@@ -102,7 +101,7 @@ export const landingHtml = `<!DOCTYPE html>
         </section>
 
         <section class="section agent" id="codex" aria-labelledby="codex-title">
-            <h2 id="codex-title">Start in your terminal. Follow along on your phone.<span>Works with Claude, Codex, OpenCode, Grok Build, and Gemini Antigravity.</span></h2>
+            <h2 id="codex-title">Start in your terminal. Follow along on your phone.</h2>
             ${devicePairHtml({
                 capture: codexCapture, command: 'codex', title: 'Add scene-name uniqueness test', reverse: true,
                 label: 'Codex at work in Crabigator, adding a test, with a moving surf scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive and the same surf scene.',

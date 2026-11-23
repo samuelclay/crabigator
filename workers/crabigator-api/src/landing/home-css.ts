@@ -31,6 +31,8 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .hero { max-width: 1296px; margin: 0 auto; padding: 64px 48px 40px; }
 .hero h1 { font-size: clamp(48px, 6.2vw, 88px); font-weight: 450; letter-spacing: -.06em; line-height: 1.02; }
 .hero-description { margin-top: 22px; font-size: 21px; color: var(--muted); }
+.hero-description span { white-space: nowrap; }
+.hero-description .brand-icon { width: .9em; height: .9em; vertical-align: -.08em; }
 .hero-start { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
 .button-primary, .button-secondary { display: inline-flex; align-items: center; padding: 12px 20px; border-radius: 8px; font-size: 15px; font-weight: 550; text-decoration: none; }
 .button-primary { background: var(--peach); color: var(--paper); }
@@ -95,9 +97,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .phone-home { display: flex; justify-content: center; flex-shrink: 0; padding: 3cqw 0 2cqw; }
 .phone-home span { width: 34%; height: 1.2cqw; border-radius: 3px; background: #edf1f4; }
 .hero-phone { position: absolute; width: 21%; right: -3%; top: -118px; }
-.providers { display: flex; justify-content: center; flex-wrap: wrap; gap: 24px 40px; max-width: 1296px; margin: 0 auto; padding: 35px 24px 80px; font-size: 14px; color: var(--muted); }
-.providers span { white-space: nowrap; display: flex; align-items: center; gap: 8px; }
-.providers svg { width: 18px; height: 18px; fill: currentColor; }
 .section { max-width: 1296px; margin: 0 auto; padding: 100px 48px; }
 .section h2 { font-size: clamp(32px, 3.4vw, 48px); line-height: 1.14; letter-spacing: -.045em; font-weight: 450; }
 .section h2 > span { display: block; color: #7f8e99; }
@@ -185,7 +184,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .hero { padding: 45px 28px 20px; }
     .hero-phone { right: 0; }
     .section { padding: 80px 28px; }
-    .providers { padding-bottom: 40px; }
     .mcp-intro { gap: 40px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
     .install { gap: 50px; }
     .claims { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -219,8 +217,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .hero-phone, .pair-phone { position: relative; top: auto; right: auto; width: 44%; margin: -30% 0 0 4%; z-index: 1; }
     .phone-frame { padding: 4px; border-radius: 18px; }
     .phone-screen { border-radius: 12px; }
-    .providers { padding: 12px 24px 40px; gap: 18px 25px; font-size: 12px; }
-    .providers svg { width: 16px; height: 16px; }
     .section { padding: 60px 24px; }
     .section h2 { font-size: 32px; }
     .tablet-frame { padding: 5px; border-radius: 12px; }
