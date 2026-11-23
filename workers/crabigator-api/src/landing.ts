@@ -147,17 +147,17 @@ ${cardsHtml}
                 </div>
                 <ol class="install-steps">
                     <li>Install Crabigator with the command above.</li>
-                    <li>Run <code>crabigator</code>, <code>crabigator codex</code>, <code>crabigator opencode</code>, or <code>crabigator grok</code>.</li>
+                    <li>Start the agent you want to use.
+                        <dl class="agent-commands">
+                            <div><dt>Claude Code</dt><dd><code>crabigator claude</code></dd></div>
+                            <div><dt>Codex</dt><dd><code>crabigator codex</code></dd></div>
+                            <div><dt>OpenCode</dt><dd><code>crabigator opencode</code></dd></div>
+                            <div><dt>Grok Build</dt><dd><code>crabigator grok</code></dd></div>
+                            <div id="antigravity"><dt>Antigravity</dt><dd><code>crabigator antigravity</code> or <code>crabigator agy</code></dd></div>
+                        </dl>
+                    </li>
                     <li>Open the pairing link on your phone.</li>
                 </ol>
-                <details class="antigravity-start">
-                    <summary>Set up Antigravity CLI</summary>
-                    <p id="antigravity">Install <a href="https://antigravity.google/docs/cli/tutorial/">Antigravity CLI</a> and sign in with <code>agy</code>. For Antigravity support, use Cargo in place of the npm command above. Install Crabigator from <a href="https://github.com/samuelclay/crabigator">the main branch</a> with <code>cargo install --git https://github.com/samuelclay/crabigator --locked</code>.</p>
-                    <div class="install-command">
-                        <code id="antigravity-command">crabigator antigravity --model gemini-4-neon-high</code>
-                        <button type="button" data-copy-target="antigravity-command" aria-label="Copy Antigravity command">${iconCopy}</button>
-                    </div>
-                </details>
             </div>
         </section>
         <section class="section updates" id="mobile">
