@@ -55,8 +55,8 @@ export const landingHtml = `<!DOCTYPE html>
     <header class="site-header">
         <a class="wordmark" href="/" aria-label="Crabigator home">${iconCrabigatorLogo}</a>
         <nav aria-label="Main navigation">
-            <a href="#claude-code">How it works</a>
             <a href="#codex">Terminal to phone</a>
+            <a href="#claude-code">How it works</a>
             <a href="#apps">Apps</a>
             <a href="#install">Install</a>
             <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener">GitHub</a>
@@ -94,14 +94,14 @@ export const landingHtml = `<!DOCTYPE html>
             </figure>
         </section>
 
-        <section class="section agent" id="claude-code" aria-labelledby="claude-code-title">
-            <h2 id="claude-code-title">Your CLI agent, unchanged.</h2>
-            ${sessionSwitcherHtml}
-        </section>
-
         <section class="section agent" id="codex" aria-labelledby="codex-title">
             <h2 class="harbor-title" id="codex-title"><span>Start in your terminal.</span> <span>Follow along on your phone.</span></h2>
             ${harborHtml}
+        </section>
+
+        <section class="section agent" id="claude-code" aria-labelledby="claude-code-title">
+            <h2 id="claude-code-title">Your CLI agent, unchanged.</h2>
+            ${sessionSwitcherHtml}
         </section>
 
         <section class="section surfaces" id="apps" aria-labelledby="surfaces-title">
