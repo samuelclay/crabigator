@@ -1,17 +1,19 @@
 // Two excerpts from Crabigator PRs #4 and #2. The board, terminal splits and
 // phone details use the same session descriptions so each cut is easy to follow.
 import { heroCapture, trainFlowHtml } from './desktop-capture';
-import { iconClaude, iconCodex, iconCrabigator, iconKeyboard, iconMicrophone, iconPullRequest, iconWifi } from './icons';
+import { iconClaude, iconCodex, iconCrabigator, iconKeyboard, iconMicrophone, iconSearch, iconDesktop, iconLines, iconWifi } from './icons';
+import { iconPerson, iconSliders } from '../dashboard/icons';
+import { appModulesHtml } from './app-modules';
 
 const sessions = [
     { id: 'refresh', pr: 4, title: 'Refresh idle PRs', agent: 'Codex', icon: iconCodex, mark: '◆◇◆', branch: 'hourly-pr-refresh',
       prompt: 'Refresh idle PRs once an hour.', file: 'src/pr.rs', line: 1246,
       diff: ['- self.refresh_active_prs();', '+ self.refresh_open_prs();', '  self.retry_unenriched();'],
-      summary: 'Idle pull requests now refresh hourly.', adds: 36, deletes: 24, flow: heroCapture.flowHtml },
+      summary: 'Idle pull requests now refresh hourly.', prTitle: 'Refresh idle pull requests hourly', files: 1, adds: 36, deletes: 24, flow: heroCapture.flowHtml },
     { id: 'stats', pr: 2, title: 'Fit stats in short windows', agent: 'Claude Code', icon: iconClaude, mark: 'ᛏᛏ', branch: 'compact-stats-grid',
       prompt: 'Keep stats visible in short windows.', file: 'src/ui/stats.rs', line: 21,
       diff: ['+ const CORE_STATS_ROWS: u16 = 7;', '+ const COMPACT_STATS_ROWS: u16 = 4;'],
-      summary: 'Short windows use the compact grid.', adds: 234, deletes: 129, flow: trainFlowHtml },
+      summary: 'Short windows use the compact grid.', prTitle: 'Keep all stats visible in short windows', files: 3, adds: 234, deletes: 129, flow: trainFlowHtml },
 ];
 type Session = typeof sessions[number];
 
@@ -33,15 +35,26 @@ function desktopPane(s: Session) {
     </div>`;
 }
 function boardRow(s: Session) {
-    return `<button class="switch-row ${s.id}" type="button" data-open="${s.id}" disabled>
-        <span>${mark(s)} <b>#${s.pr}</b> ${tally(s)}</span><strong>${s.title}</strong><small>${s.icon} ${s.agent} <i>›</i></small>
+    return `<button class="switch-row ${s.id}" type="button" data-open="${s.id}" aria-label="Open ${s.title}, PR ${s.pr}" disabled>
+        ${mark(s)}
+        <span class="switch-row-body">
+            <strong>${s.title}</strong>
+            <span class="switch-recap">${s.summary}</span>
+            <span class="switch-branch">${s.branch}<span>✓</span></span>
+            <span class="switch-pr-title">#${s.pr} &nbsp;${s.prTitle}</span>
+            <span class="switch-pr-state"><span>Merged</span> ${tally(s)}</span>
+        </span>
     </button>`;
 }
 function phoneDetail(s: Session) {
     return `<div class="switch-page switch-detail ${s.id}" data-page="${s.id}" inert>
-        <div class="phone-app-bar"><button type="button" data-open="board" aria-label="Back to PR board">‹</button><div><strong>${s.title}</strong><span>ClayBook · Live</span></div></div>
+        <div class="phone-app-bar"><button type="button" data-open="board" aria-label="Back to PR board">‹</button><div><strong>${s.title}</strong><span>ClayBook · Live</span></div><span class="phone-type">ᴀA</span></div>
         ${transcript(s)}
-        <div class="switch-phone-pr">${mark(s)} ${iconPullRequest} #${s.pr} ${tally(s)}</div>
+        ${appModulesHtml({
+            mark: { glyph: s.mark, fg: 'var(--tone)', bg: 'var(--mark)' },
+            recap: s.summary, prs: { count: 1, summary: 'merged' }, branch: s.branch, files: s.files, symbols: 0,
+            thinkingSeconds: s.id === 'refresh' ? 19 : 36, prompts: 1, context: { used: 34000, limit: 258000 },
+        }, s.flow)}
         <div class="phone-composer" aria-hidden="true">${iconMicrophone}${iconKeyboard}<span>Message</span></div>
     </div>`;
 }
@@ -55,10 +68,15 @@ export const sessionSwitcherHtml = `
         <div class="phone-status" aria-hidden="true"><span>9:41</span><span class="phone-island"></span><span class="phone-indicators">${iconWifi}<span class="phone-battery"></span></span></div>
         <div class="switch-stack">
             <div class="switch-page switch-board" data-page="board">
-                <div class="switch-board-head">${iconCrabigator}<strong>PR board</strong></div>
-                <div class="switch-machine">ClayBook <small>2 sessions</small></div>
-                <div class="switch-project">samuelclay/crabigator</div>
-                ${sessions.map(boardRow).join('')}
+                <div class="switch-board-head" aria-hidden="true">${iconCrabigator}<span>＋</span>${iconSearch}${iconPerson}</div>
+                <div class="switch-filters" aria-hidden="true"><span>24h ⌄</span><span>Live ⌄</span><span>All computers ⌄</span><b>${iconSliders} View</b></div>
+                <div class="switch-roster">
+                    <div class="switch-machine">${iconDesktop} ClayBook <small>2 sessions ﹀</small></div>
+                    <div class="switch-age">Last hour</div>
+                    <div class="switch-project">samuelclay/crabigator</div>
+                    ${sessions.map(boardRow).join('')}
+                </div>
+                <div class="switch-modes" aria-hidden="true"><span>${iconLines} List</span><b>▥ PR board</b><span>∴ Conductor</span></div>
             </div>
             ${sessions.map(phoneDetail).join('')}
         </div>
@@ -98,30 +116,48 @@ export const sessionSwitcherCss = `
 .switch-phone { width:100%; }
 .switch-stack { position:relative; flex:1; min-height:0; overflow:hidden; }
 .switch-page { position:absolute; inset:0; display:flex; flex-direction:column; background:#0d131b; transition:transform .6s cubic-bezier(.22,1,.36,1),opacity .45s; }
-.switch-board { padding:0 4cqw; }
-.session-switcher:not([data-view=board]) .switch-board { transform:translateX(-22%) scale(.96); opacity:.38; }
+.switch-board { padding:0 3cqw; background:#101419; color:#e6edf3; font-family:-apple-system,BlinkMacSystemFont,'DM Sans',sans-serif; }
+.session-switcher:not([data-view=board]) .switch-board { transform:translateX(-22%); opacity:.38; }
 .switch-detail[inert] { transform:translateX(103%); pointer-events:none; }
-.switch-board-head,.switch-machine { display:flex; align-items:center; justify-content:space-between; }
-.switch-board-head { justify-content:start; gap:2cqw; padding:2cqw 0 5cqw; border-bottom:1px solid #303741; font-size:7cqw; }
-.switch-board-head svg { width:10cqw; height:10cqw; }
-.switch-machine { margin-top:6cqw; font-size:5.7cqw; font-weight:600; color:#93c3e7; }.switch-machine small { font-size:4.4cqw; color:#a6b7c1; }
-.switch-project { color:#e6c58a; margin:3cqw 0; font:4.4cqw monospace; }
-.switch-row { display:block; text-align:left; padding:3.7cqw; margin:1.3cqw 0; background:#1b222a; color:#ecf0f3; border:1px solid #333d48; border-left:2px solid var(--tone); border-radius:6px; font-size:5cqw; }
-.switch-row:enabled:hover,.switch-row:focus-visible { background:#29313c; }
-.switch-row > span,.switch-row small { display:flex; align-items:center; gap:1.5cqw; }.switch-row .switch-tally,.switch-row small i { margin-left:auto; }
+.switch-board-head,.switch-filters,.switch-machine,.switch-modes { display:flex; align-items:center; flex:none; }
+.switch-board-head { padding:1cqw 1.6cqw 3cqw; gap:4cqw; color:#a4aab0; }
+.switch-board-head svg { width:5.2cqw; height:5.2cqw; fill:currentColor; }
+.switch-board-head svg:first-child { width:9cqw; height:9cqw; margin-right:auto; }
+.switch-board-head > span { font:7cqw/1 sans-serif; }
+.switch-filters { gap:1cqw; font-size:3.4cqw; white-space:nowrap; }
+.switch-filters > * { padding:1.3cqw 2cqw; background:#1b2129; border-radius:3cqw; }
+.switch-filters b { margin-left:auto; }
+.switch-filters svg,.switch-modes svg { width:1em; height:1em; }
+.switch-roster { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.switch-machine { gap:2cqw; padding:4cqw 2cqw 2.8cqw; color:#ffda49; font-size:4.3cqw; font-weight:550; }
+.switch-machine svg { width:1.15em; height:1.15em; fill:currentColor; }
+.switch-machine small { margin-left:auto; font-size:3.5cqw; color:#a0a5ac; }
+.switch-age { padding:1.1cqw 2cqw; color:#70dedf; background:#103035; font-size:3.65cqw; }
+.switch-project { color:#ffda49; margin:2cqw; font-size:3.7cqw; }
+.switch-row { appearance:none; display:grid; grid-template-columns:10cqw minmax(0,1fr); gap:2.5cqw; width:100%; padding:2.2cqw 2cqw; text-align:left; background:transparent; border:0; border-radius:0; font:inherit; }
+.switch-row + .switch-row { margin-top:1.8cqw; }
+.switch-row:enabled:hover,.switch-row:focus-visible { background:#262b2d; }
+.switch-row:focus-visible { outline-offset:-2px; }
 .switch-row:disabled { cursor:default; }
-.switch-row strong { display:block; margin:2cqw 0; font-weight:550; }
-.switch-row small { color:#a8b6c3; font-size:4.6cqw; }.switch-row small svg { width:1em; height:1em; }
-.switch-row small i { color:var(--tone); font:6cqw/1 sans-serif; }
+.switch-row .switch-mark { display:grid; place-items:center; align-self:start; height:6.6cqw; font-size:3.7cqw; }
+.switch-row-body { display:grid; gap:.95cqw; }
+.switch-row strong { color:#5fafff; font-size:4.75cqw; font-weight:550; line-height:1.3; }
+.switch-recap { color:#829dff; font-size:3.85cqw; line-height:1.3; }
+.switch-branch,.switch-pr-state { display:flex; align-items:center; gap:2cqw; font-size:3.6cqw; }
+.switch-branch { justify-content:space-between; color:#a5a7ab; }
+.switch-branch > span,.switch-pr-title { color:#af87ff; }
+.switch-pr-title { margin-top:.8cqw; font-size:4.1cqw; line-height:1.3; }
+.switch-pr-state > span:first-child { color:#c4a4ff; background:#261e35; padding:0 1cqw; }
+.switch-modes { align-self:center; margin:2cqw 0; padding:1cqw; gap:.6cqw; color:#afb2b4; background:#24282c; border-radius:6cqw; font-size:3.6cqw; }
+.switch-modes > * { padding:1.2cqw 2cqw; }
+.switch-modes b { background:#443b29; color:#d7af5f; border-radius:4cqw; font-weight:550; }
 .switch-detail .phone-app-bar button { padding:1cqw; border:0; background:transparent; color:#67b3f7; font:11cqw/1 sans-serif; }
 .switch-detail .switch-transcript { flex:1; overflow:auto; background:#111518; font-size:4.5cqw; }
-.switch-phone-pr { display:flex; align-items:center; gap:2cqw; padding:2.5cqw 4cqw; color:#c2b0e8; background:#20242c; font-size:4.5cqw; }
-.switch-phone-pr svg { width:1em; height:1em; }.switch-phone-pr .switch-tally { margin-left:auto; }
 .session-switcher[data-next=refresh] .switch-row.refresh,.session-switcher[data-next=stats] .switch-row.stats { animation:switch-row-open .65s ease-in-out both; }
-@keyframes switch-row-open { 45% { transform:scale(.98); } to { background:var(--mark); border-color:var(--tone); } }
+@keyframes switch-row-open { from { background:transparent; } to { background:#d7af5f25; } }
 @media(max-width:700px) {
     .session-switcher { grid-template-columns:minmax(0,1fr); gap:18px; margin-top:30px; }
-    .switch-phone { width:clamp(160px,52%,210px); justify-self:center; }
+    .switch-phone { width:clamp(205px,68%,260px); justify-self:center; }
     .switch-footer .switch-flow { display:none; }
 }
 @media(prefers-reduced-motion:reduce) { .switch-page,.switch-pane { transition:none; } }
