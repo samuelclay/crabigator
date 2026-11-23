@@ -20,6 +20,25 @@ import org.junit.Test
 class TerminalScrollTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun jumpBetweenHistoryAndLivePrompts() {
+        val pinned = mutableStateOf(true)
+        val history = "❯ First prompt\n" + "output\n".repeat(90) + "› Second prompt\n"
+        compose.setContent {
+            MaterialTheme { TerminalViewport(history, "› Third prompt\nanswer", UiPreferences(), pinned.value) { pinned.value = it } }
+        }
+        val previous = compose.onNodeWithText("Previous prompt")
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("3/3").fetchSemanticsNodes().isNotEmpty() }
+        previous.performClick()
+        previous.assert(hasText("Second prompt")).performClick()
+        previous.assert(hasText("First prompt")).performClick()
+        previous.assertDoesNotExist()
+        val next = compose.onNodeWithText("Next prompt")
+        next.assert(hasText("Second prompt")).performClick()
+        next.assert(hasText("Third prompt")).performClick()
+        next.assertDoesNotExist()
+        assertFalse(pinned.value)
+    }
+
     @Test fun joinedParagraphsKeepTwoCellIndentAfterResizing() {
         val width = mutableStateOf(160)
         val first = "  This paragraph describes the updated reading experience"

@@ -144,6 +144,7 @@ object TerminalText {
         return Color(channel(c / 36), channel(c / 6 % 6), channel(c % 6))
     }
     fun parse(input: String, cellWidthEm: Float = .6f): AnnotatedString {
+        val plainTranscript = '\u001b' !in input && "────" !in input
         val out = AnnotatedString.Builder()
         var fg = Color(0xFFDDE3ED); var bg = Color.Unspecified; var bold = false; var dim = false; var underline = false; var inverse = false
         var link: String? = null
@@ -211,6 +212,14 @@ object TerminalText {
                     continue
                 }
                 i = (i + 2).coerceAtMost(input.length); continue
+            }
+            if (column == 0 && when (input[i]) {
+                '>' -> bold
+                '❯', '›' -> bg != Color.Unspecified || inverse || plainTranscript
+                else -> false
+            }) {
+                val offset = out.length + pending.length
+                out.addStringAnnotation("prompt", "", offset, offset + 1)
             }
             when (input[i]) {
                 '\n' -> { pending.append('\n'); column = 0 }

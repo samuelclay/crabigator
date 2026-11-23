@@ -1,5 +1,26 @@
 import SwiftUI
 
+private struct TerminalPrompt: Equatable {
+    let offset: Int
+    let excerpt: String
+
+    static func scan(_ rendered: NSAttributedString, plainTranscript: Bool, startingAt base: Int = 0) -> [Self] {
+        var offset = base
+        return rendered.string.split(separator: "\n", omittingEmptySubsequences: false).compactMap { line in
+            defer { offset += line.utf16.count + 1 }
+            guard let marker = line.first, "❯›>".contains(marker),
+                  line.dropFirst().first?.isWhitespace == true else { return nil }
+            let attrs = rendered.attributes(at: offset - base, effectiveRange: nil)
+            if marker == ">" {
+                guard (attrs[.font] as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitBold) == true else { return nil }
+            } else if !plainTranscript && attrs[.backgroundColor] == nil { return nil }
+            let text = line.dropFirst().trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty else { return nil }
+            return Self(offset: offset, excerpt: String(text.prefix(80)))
+        }
+    }
+}
+
 struct TerminalViewport: UIViewRepresentable {
     var history: String, screen: String, preferences: Preferences
     @Binding var pinned: Bool
@@ -20,6 +41,8 @@ struct TerminalViewport: UIViewRepresentable {
             view.text.panGestureRecognizer.require(toFail: pan)
         }
         context.coordinator.view = view
+        view.previous.addTarget(context.coordinator, action: #selector(Coordinator.jump(_:)), for: .touchUpInside)
+        view.nextPrompt.addTarget(context.coordinator, action: #selector(Coordinator.jump(_:)), for: .touchUpInside)
         return view
     }
     func updateUIView(_ view: TerminalScrollView, context: Context) { context.coordinator.parent = self; context.coordinator.openURL = context.environment.openURL; context.coordinator.update() }
@@ -31,6 +54,9 @@ struct TerminalViewport: UIViewRepresentable {
         let queue = DispatchQueue(label: "com.newsblur.crabigator.ansi", qos: .userInitiated)
         var sourceHistory = "", sourceScreen = "", style: Preferences?
         var cachedHistory = NSAttributedString(string: ""), cachedSource = "", cachedStyle: Preferences?
+        private var cachedPrompts: [TerminalPrompt] = []
+        private var prompts: [TerminalPrompt] = []
+        private var selected: TerminalPrompt?
         var cachedWidth: CGFloat = 0
         var appliedHistory = "", appliedStyle: Preferences?
         var rendering = false
@@ -53,6 +79,8 @@ struct TerminalViewport: UIViewRepresentable {
             }
             wasPinned = parent.pinned
             view.follow = parent.pinned
+            if parent.pinned { selected = nil }
+            updatePills()
             if sourceHistory == parent.history && sourceScreen == parent.screen && style == parent.preferences {
                 if parent.pinned { view.followBottom() }
                 renderLatest()
@@ -72,6 +100,7 @@ struct TerminalViewport: UIViewRepresentable {
                 guard let self else { return }
                 if self.cachedSource != history || self.cachedStyle != prefs {
                     self.cachedHistory = TerminalText.parse(history, size: CGFloat(prefs.fontSize), spacing: CGFloat(prefs.lineSpacing) / 100, wrap: prefs.wrap)
+                    self.cachedPrompts = TerminalPrompt.scan(self.cachedHistory, plainTranscript: !history.contains("\u{1b}") && !history.contains("────"))
                     self.cachedSource = history; self.cachedStyle = prefs
                     self.cachedWidth = prefs.wrap ? 0 : self.cachedHistory.maximumLineWidth()
                 }
@@ -79,6 +108,7 @@ struct TerminalViewport: UIViewRepresentable {
                 if !history.isEmpty && !history.hasSuffix("\n") { result.append(NSAttributedString(string: "\n")) }
                 let historyLength = result.length
                 let renderedScreen = TerminalText.parse(screen, size: CGFloat(prefs.fontSize), spacing: CGFloat(prefs.lineSpacing) / 100, wrap: prefs.wrap)
+                let prompts = self.cachedPrompts + TerminalPrompt.scan(renderedScreen, plainTranscript: !screen.contains("\u{1b}") && !screen.contains("────"), startingAt: historyLength)
                 result.append(renderedScreen)
                 // Horizontal scrolling preserves the desktop columns. Layout remains native TextKit 2.
                 let width = prefs.wrap ? 0 : max(self.cachedWidth, renderedScreen.maximumLineWidth())
@@ -105,19 +135,71 @@ struct TerminalViewport: UIViewRepresentable {
                     text.textStorage.endEditing()
                     // VoiceOver needs the text, not thousands of terminal color runs.
                     text.accessibilityAttributedValue = NSAttributedString(string: result.string)
+                    self.prompts = prompts
                     self.appliedHistory = history; self.appliedStyle = prefs; self.appliedRevision = revision
                     if selection.location <= result.length { text.selectedRange = NSRange(location: selection.location, length: min(selection.length, result.length - selection.location)) }
                     view.setNeedsLayout(); view.layoutIfNeeded()
                     if self.parent.pinned { view.followBottom() }
                     else if text.contentOffset != offset { text.setContentOffset(offset, animated: false) }
+                    self.updatePills()
                     // Apply completed frames even while newer output arrives. Dropping every
                     // older frame would freeze a busy session until its output paused.
                     if self.revision != revision { self.renderLatest() }
                 }
             }
         }
+        private func updatePills() {
+            guard let view else { return }
+            var after = prompts.count
+            var before = after - 1
+            if !view.follow && !prompts.isEmpty {
+                if let selected, let current = prompts.firstIndex(of: selected) {
+                    before = current - 1
+                    after = current + 1
+                } else {
+                    let text = view.text
+                    let point = CGPoint(x: text.textContainerInset.left, y: text.contentOffset.y + 1)
+                    if let position = text.closestPosition(to: point) {
+                        let offset = text.offset(from: text.beginningOfDocument, to: position)
+                        after = prompts.firstIndex { $0.offset >= offset } ?? prompts.count
+                        before = after - 1
+                    }
+                }
+            }
+            for (button, index, label) in [(view.previous, before, "Previous prompt"), (view.nextPrompt, after, "Next prompt")] {
+                guard prompts.indices.contains(index) else { button.isHidden = true; continue }
+                let prompt = prompts[index]
+                let title = "\(label)   \(index + 1)/\(prompts.count)"
+                button.tag = index
+                if button.configuration?.title != title || button.configuration?.subtitle != prompt.excerpt {
+                    button.configuration?.title = title
+                    button.configuration?.subtitle = prompt.excerpt
+                    button.accessibilityLabel = "\(label), \(index + 1) of \(prompts.count), \(prompt.excerpt)"
+                    view.setNeedsLayout()
+                }
+                button.isHidden = false
+            }
+        }
+        @objc func jump(_ button: UIButton) {
+            guard let view, prompts.indices.contains(button.tag) else { return }
+            let prompt = prompts[button.tag], text = view.text
+            guard let pos = text.position(from: text.beginningOfDocument, offset: prompt.offset) else { return }
+            selected = prompt
+            view.follow = false
+            wasPinned = false
+            parent.pinned = false
+            let y = text.caretRect(for: pos).minY - 6
+            let maxY = max(0, text.contentSize.height - text.bounds.height + text.adjustedContentInset.bottom)
+            text.setContentOffset(CGPoint(x: 0, y: min(maxY, max(0, y))), animated: false)
+            view.setContentOffset(.zero, animated: false)
+            updatePills()
+        }
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            if scrollView === view?.text { updatePills() }
+        }
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
             if scrollView === view?.text {
+                selected = nil
                 view?.follow = false; view?.animateNextFollow = false; view?.isFollowingAnimation = false
                 wasPinned = false; parent.pinned = false
             }
@@ -164,12 +246,40 @@ struct TerminalViewport: UIViewRepresentable {
 }
 final class TerminalScrollView: UIScrollView {
     let text = UITextView(usingTextLayoutManager: true)
+    let previous = TerminalScrollView.promptButton(), nextPrompt = TerminalScrollView.promptButton()
+    private static func promptButton() -> UIButton {
+        var config = UIButton.Configuration.filled()
+        config.cornerStyle = .fixed
+        config.background.cornerRadius = 14
+        config.background.strokeWidth = 1
+        config.background.strokeColor = TerminalText.rgb(0x374654)
+        config.baseBackgroundColor = TerminalText.rgb(0x19232D)
+        config.baseForegroundColor = TerminalText.rgb(0xEDF3F7)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12)
+        config.titleAlignment = .leading
+        config.titleLineBreakMode = .byTruncatingTail
+        config.subtitleLineBreakMode = .byTruncatingTail
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = UIFontMetrics(forTextStyle: .caption1).scaledFont(for: .systemFont(ofSize: 12, weight: .semibold))
+            return outgoing
+        }
+        config.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = UIFont.preferredFont(forTextStyle: .caption1)
+            outgoing.foregroundColor = TerminalText.rgb(0xB8C6D1)
+            return outgoing
+        }
+        let button = UIButton(configuration: config)
+        button.isHidden = true
+        return button
+    }
     var documentWidth: CGFloat = 0
     var follow = true
     var animateNextFollow = false
     var isFollowingAnimation = false
     var isUserScrolling: Bool { isDragging || isDecelerating || text.isDragging || text.isDecelerating }
-    override init(frame: CGRect) { super.init(frame: frame); addSubview(text); alwaysBounceHorizontal = false; showsVerticalScrollIndicator = false }
+    override init(frame: CGRect) { super.init(frame: frame); addSubview(text); addSubview(previous); addSubview(nextPrompt); alwaysBounceHorizontal = false; showsVerticalScrollIndicator = false }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -177,6 +287,13 @@ final class TerminalScrollView: UIScrollView {
         let frame = CGRect(x: 0, y: 0, width: width, height: bounds.height)
         if text.frame != frame { text.frame = frame }
         if contentSize != frame.size { contentSize = frame.size }
+        for button in [previous, nextPrompt] where !button.isHidden {
+            let size = button.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: 48))
+            let width = min(size.width, min(260, bounds.width * 0.54)), height = max(44, size.height)
+            button.frame = CGRect(x: bounds.maxX - width - 6,
+                                  y: button === previous ? bounds.minY + 6 : bounds.maxY - height - 6,
+                                  width: width, height: height)
+        }
     }
     func followBottom() {
         guard !isUserScrolling, !isFollowingAnimation else { return }

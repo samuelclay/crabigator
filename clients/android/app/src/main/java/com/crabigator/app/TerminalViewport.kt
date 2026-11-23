@@ -10,7 +10,14 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -21,19 +28,34 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+private fun promptExcerpt(line: CharSequence): String? {
+    if (line.getOrNull(1)?.isWhitespace() != true) return null
+    return line.drop(1).trim().take(80).toString().ifEmpty { null }
+}
+
+private data class PromptTarget(val block: Int, val text: String)
 
 /** Keep ANSI styles across block boundaries, without laying out the whole transcript. */
 internal fun terminalBlocks(text: AnnotatedString, linesPerBlock: Int = 24): List<AnnotatedString> {
     require(linesPerBlock > 0)
     if (text.isEmpty()) return emptyList()
     val blocks = mutableListOf<AnnotatedString>()
+    val markers = text.getStringAnnotations("prompt", 0, text.length).mapTo(mutableSetOf()) { it.start }
     var start = 0
     var lineStart = 0
     var lines = 0
     fun finishLine(end: Int) {
-        if (TerminalText.isRule(text.text.subSequence(lineStart, end))) {
+        val line = text.text.subSequence(lineStart, end)
+        if (start < lineStart && lineStart in markers && promptExcerpt(line) != null) {
+            blocks += text.subSequence(start, lineStart - 1)
+            start = lineStart
+            lines = 0
+        }
+        if (TerminalText.isRule(line)) {
             // A rule gets its own Text so it can clip while nearby text wraps.
             if (start < lineStart) blocks += text.subSequence(start, lineStart - 1)
             blocks += text.subSequence(lineStart, end)
@@ -52,7 +74,7 @@ internal fun terminalBlocks(text: AnnotatedString, linesPerBlock: Int = 24): Lis
     return blocks
 }
 
-private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyList(), val widthEm: Float = 0f, val columns: Int = 0)
+private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyList(), val widthEm: Float = 0f, val columns: Int = 0, val prompts: List<PromptTarget> = emptyList())
 
 @Composable private fun terminalDocument(source: String, wrap: Boolean, cellWidthEm: Float, indentCellWidthEm: Float): State<TerminalDocument> =
     produceState(TerminalDocument(), source, wrap, cellWidthEm, indentCellWidthEm) {
@@ -69,7 +91,11 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
             }
             // A single blank terminal row is still one row after its delimiter is removed.
             val blocks = if (parsed.isEmpty() && source.isNotEmpty()) listOf(parsed) else terminalBlocks(parsed)
-            TerminalDocument(blocks, widthEm, columns)
+            val prompts = blocks.mapIndexedNotNull { index, block ->
+                if (!block.hasStringAnnotations("prompt", 0, 1)) return@mapIndexedNotNull null
+                promptExcerpt(block.text.substringBefore('\n'))?.let { PromptTarget(index, it) }
+            }
+            TerminalDocument(blocks, widthEm, columns, prompts)
         }
     }
 
@@ -89,12 +115,20 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
     // and content cannot read different background parse results.
     val historyBlocks = historyDocument.blocks
     val screenBlocks = screenDocument.blocks
+    val prompts = remember(historyDocument, screenDocument) {
+        historyDocument.prompts + screenDocument.prompts.map { it.copy(block = historyBlocks.size + it.block) }
+    }
+    var selected by remember { mutableStateOf<PromptTarget?>(null) }
+    val scope = rememberCoroutineScope()
     val scroll = rememberLazyListState()
     val horizontal = rememberScrollState()
     val currentSetPinned by rememberUpdatedState(setPinned)
     val userScroll = remember(scroll) { object : NestedScrollConnection {
         override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-            if (source == NestedScrollSource.UserInput && available.y > 0) currentSetPinned(false)
+            if (source == NestedScrollSource.UserInput && available.y != 0f) {
+                selected = null
+                if (available.y > 0) currentSetPinned(false)
+            }
             return Offset.Zero
         }
         override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
@@ -109,6 +143,7 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
     // Only an explicit return to following animates. New output must not cancel
     // that animation or animate every arriving frame.
     LaunchedEffect(pinned) {
+        if (pinned) selected = null
         val animate = pinned && !wasPinned
         wasPinned = pinned
         if (animate && currentCount > 0) {
@@ -146,6 +181,43 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
                     TerminalBlock(screenBlocks[index], prefs)
                 }
             }
+        }
+        val current = if (pinned) -1 else prompts.indexOf(selected)
+        val after = when {
+            pinned -> prompts.size
+            current >= 0 -> current + 1
+            else -> prompts.indexOfFirst {
+                it.block > scroll.firstVisibleItemIndex ||
+                    (it.block == scroll.firstVisibleItemIndex && scroll.firstVisibleItemScrollOffset == 0)
+            }.let { if (it < 0) prompts.size else it }
+        }
+        val before = if (current >= 0) current - 1 else after - 1
+        fun jump(target: PromptTarget) {
+            selected = target
+            setPinned(false)
+            scope.launch {
+                horizontal.scrollTo(0)
+                scroll.scrollToItem(target.block)
+            }
+        }
+        prompts.getOrNull(before)?.let { target ->
+            PromptPill("Previous prompt", before, prompts.size, target.text, Modifier.align(Alignment.TopEnd)) { jump(target) }
+        }
+        prompts.getOrNull(after)?.let { target ->
+            PromptPill("Next prompt", after, prompts.size, target.text, Modifier.align(Alignment.BottomEnd)) { jump(target) }
+        }
+    }
+}
+
+@Composable private fun PromptPill(label: String, index: Int, total: Int, text: String, modifier: Modifier, onClick: () -> Unit) {
+    Surface(onClick = onClick, modifier = modifier.padding(6.dp).widthIn(max = 210.dp),
+        shape = RoundedCornerShape(14.dp), color = Color(0xFF19232D), border = BorderStroke(1.dp, Color(0xFF374654))) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 5.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text("${index + 1}/$total", color = Color(0xFF79C9DF), fontSize = 12.sp)
+            }
+            Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp, color = Color(0xFFB8C6D1))
         }
     }
 }

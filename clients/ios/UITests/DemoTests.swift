@@ -29,6 +29,15 @@ final class DemoTests: XCTestCase {
         let reply = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "your message stayed on this device"), object: app.textViews["terminal-output"])
         XCTAssertEqual(XCTWaiter.wait(for: [reply], timeout: 5), .completed)
         capture("demo-reply", app)
+        let previous = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Previous prompt")).firstMatch
+        XCTAssertTrue(previous.label.contains("3 of 3, Show the tests"))
+        previous.tap()
+        XCTAssertTrue(previous.label.contains("2 of 3, Dark"))
+        previous.tap()
+        let next = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Next prompt")).firstMatch
+        XCTAssertTrue(next.label.contains("3 of 3, Show the tests"))
+        next.tap()
+        XCTAssertFalse(next.exists)
         app.buttons["Back"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "PR #24")).firstMatch.waitForExistence(timeout: 5))
     }
