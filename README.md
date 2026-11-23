@@ -1,9 +1,9 @@
 <h1 align="center">
-  <a href="https://drinkcrabigator.com"><img src="assets/readme/hero.png" alt="Crabigator. Take your agents with you: Claude Code, Codex, opencode, and Grok, live on your phone." width="840"></a>
+  <a href="https://drinkcrabigator.com"><img src="assets/readme/hero.png" alt="Crabigator. Take your agents with you: Claude Code, Codex, opencode, Grok, and Antigravity, live on your phone." width="840"></a>
 </h1>
 
 <p align="center">
-  <b>Claude Code, Codex, opencode, and Grok, live on your phone.</b><br>
+  <b>Claude Code, Codex, opencode, Grok, and Antigravity, live on your phone.</b><br>
   Crabigator runs your coding agent in your terminal, unchanged, and adds what it doesn’t show.<br>
   Follow and answer every session from your phone, your tablet, or a browser tab.
 </p>
@@ -33,7 +33,8 @@ Then run it in place of your agent:
 crabigator            # Claude Code (or your default)
 crabigator codex      # Codex
 crabigator opencode   # opencode
-crabigator grok       # Grok
+crabigator grok       # Grok Build
+crabigator antigravity # Google Antigravity CLI (Gemini)
 ```
 
 The first time, Crabigator shows a pairing link. Open it on your phone, and your sessions stream to the [dashboard](https://drinkcrabigator.com/dashboard) and the apps from then on.
@@ -67,7 +68,7 @@ Above the status bar sit the latest recap and the pull requests the session is w
   <img src="assets/readme/codex.png" alt="Codex at work in Crabigator, adding a test, with a surf scene in its status bar, beside the same session on iPhone." width="840">
 </p>
 
-The same status bar and apps work with [Codex](https://github.com/openai/codex), [opencode](https://opencode.ai), and [Grok](https://grok.com). Crabigator follows each agent through its own logs and events, so there’s nothing to set up.
+The same status bar and apps work with [Codex](https://github.com/openai/codex), [opencode](https://opencode.ai), [Grok Build](https://grok.com), and [Google Antigravity CLI](https://antigravity.google/docs/cli/tutorial/). Crabigator follows each agent through its own logs and events, so there’s nothing to set up.
 
 ## Your sessions, on every screen
 
@@ -167,7 +168,7 @@ On a Mac with Ghostty, new sessions start in the background while the display sl
 ┌─────────────────────────────────────┐
 │                                     │
 │     Claude Code, Codex, opencode,   │  ← The agent's own command,
-│     or Grok                         │    running as normal
+│     Grok, or Antigravity            │    running as normal
 │                                     │
 ├─────────────────────────────────────┤
 │ Recap · Pull requests               │
@@ -193,6 +194,8 @@ crabigator claude             # Claude Code
 crabigator codex              # Codex
 crabigator opencode           # opencode
 crabigator grok               # Grok (also: grok-build, xai)
+crabigator antigravity        # Google Antigravity CLI (also: gemini, agy)
+crabigator antigravity --model gemini-4-neon-high
 crabigator resume             # Resume the last session (also: r, --resume)
 crabigator continue           # Continue the last conversation (also: c, --continue)
 
@@ -226,7 +229,7 @@ Any other arguments go straight to the agent. Codex starts in inline mode (`--no
 Preferences live in `~/.crabigator/config.toml`:
 
 ```toml
-default_platform = "claude"   # or "codex", "opencode", "grok"
+default_platform = "claude"   # or "codex", "opencode", "grok", "antigravity"
 ide = "vscode"                # file links: vscode, cursor, idea, zed, sublime, none
 terminal = "ghostty"          # terminal, ghostty (detected when unset)
 check_for_updates = true      # check GitHub Releases on startup
@@ -364,7 +367,7 @@ The desktop app is Rust; the cloud side is a Cloudflare Workers project. [AGENTS
 | Flow scenes | [`src/flow/`](src/flow.rs) | The scenes, ported from [flow](https://github.com/robdmac/flow) ([fork log](src/flow/FORK.md)) |
 | Scene library | [`crates/flow-render/`](crates/flow-render/) | The same scenes for the apps (iOS, Android) and the dashboard (WebAssembly) |
 | Diff parsing | [`src/parsers/`](src/parsers.rs) | Changes by function and class, per language |
-| Agents | [`src/platforms/`](src/platforms.rs) | Claude Code hooks and transcripts; Codex, opencode, and Grok session logs |
+| Agents | [`src/platforms/`](src/platforms.rs) | Claude Code hooks and transcripts; Codex, opencode, Grok, and Antigravity session logs |
 | Recaps and PRs | [`src/recap.rs`](src/recap.rs), [`src/pr.rs`](src/pr.rs), [`src/prs_board.rs`](src/prs_board.rs) | Recaps, pull request tracking, the `prs` board |
 | Cloud client | [`src/cloud/`](src/cloud.rs) | Device identity, signed requests, event queue, WebSocket |
 | Cloud | [`workers/crabigator-api/`](workers/crabigator-api/) | Durable Objects, D1, dashboard, homepage, MCP server |

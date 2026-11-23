@@ -37,6 +37,7 @@ function mcpConnectHtml(): string {
         mcpConnectRow('Codex', 'mcp-codex-text', `codex mcp add crabigator --url ${url}`, 'Copy Codex command'),
         mcpConnectRow('opencode', 'mcp-opencode-text', `opencode mcp add crabigator --url ${url}`, 'Copy opencode command'),
         mcpConnectRow('Grok', 'mcp-grok-text', `grok mcp add --transport http crabigator ${url}`, 'Copy Grok command'),
+        mcpConnectRow('Antigravity', 'mcp-antigravity-text', `agy mcp add crabigator ${url}`, 'Copy Antigravity command'),
     ].join('');
     return `
                 <div class="mcp-connect">${rows}

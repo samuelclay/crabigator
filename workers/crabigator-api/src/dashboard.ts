@@ -12,16 +12,16 @@ export const dashboardHtml = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Crabigator Dashboard</title>
-    <meta name="description" content="Real-time monitoring dashboard for your Claude Code, Codex, opencode, and Grok sessions.">
+    <meta name="description" content="Real-time monitoring dashboard for your Claude Code, Codex, opencode, Grok, and Google Antigravity sessions.">
     <meta property="og:title" content="Crabigator Dashboard">
-    <meta property="og:description" content="Real-time monitoring dashboard for your Claude Code, Codex, opencode, and Grok sessions.">
+    <meta property="og:description" content="Real-time monitoring dashboard for your Claude Code, Codex, opencode, Grok, and Google Antigravity sessions.">
     <meta property="og:image" content="https://drinkcrabigator.com/assets/og-dashboard.png?v=0e52372806">
     <meta property="og:url" content="https://drinkcrabigator.com/dashboard">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Crabigator">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Crabigator Dashboard">
-    <meta name="twitter:description" content="Real-time monitoring dashboard for your Claude Code, Codex, opencode, and Grok sessions.">
+    <meta name="twitter:description" content="Real-time monitoring dashboard for your Claude Code, Codex, opencode, Grok, and Google Antigravity sessions.">
     <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-dashboard.png?v=0e52372806">
     <link rel="icon" type="image/svg+xml" href="${faviconPath}">
     <link rel="icon" href="${faviconIcoPath}" sizes="16x16 32x32 48x48">

@@ -96,11 +96,13 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .phone-home span { width: 34%; height: 1.2cqw; border-radius: 3px; background: #edf1f4; }
 .hero-phone { position: absolute; width: 21%; right: -3%; top: -118px; }
 .providers { display: flex; justify-content: center; flex-wrap: wrap; gap: 24px 40px; max-width: 1296px; margin: 0 auto; padding: 35px 24px 80px; font-size: 14px; color: var(--muted); }
-.providers span { display: flex; align-items: center; gap: 8px; }
+.providers span { white-space: nowrap; display: flex; align-items: center; gap: 8px; }
 .providers svg { width: 18px; height: 18px; fill: currentColor; }
 .section { max-width: 1296px; margin: 0 auto; padding: 100px 48px; }
 .section h2 { font-size: clamp(32px, 3.4vw, 48px); line-height: 1.14; letter-spacing: -.045em; font-weight: 450; }
 .section h2 > span { display: block; color: #7f8e99; }
+.antigravity-start { max-width: 660px; margin: 28px auto 0; }
+.antigravity-start p { margin: 0 0 20px; color: var(--muted); overflow-wrap: anywhere; }
 .agent > h2, .surfaces > h2, .ownership > h2, .extras > h2 { text-align: center; }
 .agent { padding-top: 70px; padding-bottom: 70px; }
 .device-pair.agent-pair { position: relative; display: flex; align-items: flex-end; justify-content: space-between; margin-top: 52px; }

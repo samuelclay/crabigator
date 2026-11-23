@@ -1,7 +1,7 @@
 {
   "name": "crabigator",
   "version": "0.18.0",
-  "description": "A TUI wrapper for Claude Code, Codex, opencode, and Grok with real-time status widgets",
+  "description": "A TUI wrapper for Claude Code, Codex, opencode, Grok, and Google Antigravity with real-time status widgets",
   "bin": {
     "crabigator": "bin/crabigator.js"
   },
@@ -27,6 +27,8 @@
     "anthropic",
     "codex",
     "grok",
+    "antigravity",
+    "gemini",
     "opencode"
   ],
   "author": "Samuel Clay",

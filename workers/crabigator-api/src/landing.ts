@@ -18,7 +18,7 @@ import { metaPixelHtml, usePublicOrigin } from './html-render';
 import { mcpLandingSectionHtml } from './mcp/docs';
 import {
     iconCrabigator, iconCrabigatorLogo, iconCrabigatorWordmark,
-    iconMicrophone, iconKeyboard, iconWifi, iconClaude, iconCodex, iconOpencode, iconGrok, iconCopy,
+    iconMicrophone, iconKeyboard, iconWifi, iconClaude, iconCodex, iconOpencode, iconGrok, iconAntigravity, iconCopy,
 } from './landing/icons';
 
 /** The homepage's share image; release emails show it too. */
@@ -30,15 +30,15 @@ export const landingHtml = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Crabigator — Take your agents with you</title>
-    <meta name="description" content="Answer permissions, approve plans, and respond to questions from your phone. Watch Claude Code, Codex, opencode, and Grok sessions as they run.">
-    <meta property="og:title" content="Crabigator - Control Claude Code, Codex, opencode, and Grok from your phone">
-    <meta property="og:description" content="Answer permissions, approve plans, and respond to questions from your phone. Watch Claude Code, Codex, opencode, and Grok sessions as they run.">
+    <meta name="description" content="Answer permissions, approve plans, and respond to questions from your phone. Watch Claude Code, Codex, opencode, Grok, and Antigravity sessions as they run.">
+    <meta property="og:title" content="Crabigator - Control Claude Code, Codex, opencode, Grok, and Antigravity from your phone">
+    <meta property="og:description" content="Answer permissions, approve plans, and respond to questions from your phone. Watch Claude Code, Codex, opencode, Grok, and Antigravity sessions as they run.">
     <meta property="og:image" content="https://drinkcrabigator.com${ogLandingImage}">
     <meta property="og:url" content="https://drinkcrabigator.com/">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Crabigator">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Crabigator - Control Claude Code, Codex, opencode, and Grok from your phone">
+    <meta name="twitter:title" content="Crabigator - Control Claude Code, Codex, opencode, Grok, and Antigravity from your phone">
     <meta name="twitter:description" content="Answer permissions, approve plans, and respond to questions from your phone.">
     <meta name="twitter:image" content="https://drinkcrabigator.com${ogLandingImage}">
     <link rel="icon" href="${faviconPath}" type="image/svg+xml">
@@ -55,6 +55,7 @@ export const landingHtml = `<!DOCTYPE html>
         <nav aria-label="Main navigation">
             <a href="#claude-code">Claude Code</a>
             <a href="#codex">Codex</a>
+            <a href="#antigravity">Antigravity</a>
             <a href="#apps">Apps</a>
             <a href="#install">Install</a>
             <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener">GitHub</a>
@@ -65,7 +66,7 @@ export const landingHtml = `<!DOCTYPE html>
         <section class="hero" aria-labelledby="hero-title">
             <div class="hero-copy">
                 <h1 id="hero-title">Take your agents with you.</h1>
-                <p class="hero-description">Claude Code, Codex, opencode, and Grok, live on your phone.</p>
+                <p class="hero-description">Claude Code, Codex, opencode, Grok, and Antigravity, live on your phone.</p>
                 <div class="hero-start">
                     <a class="button-primary" href="#install" data-track="install_cta" data-label="hero">Install Crabigator</a>
                     <a class="button-secondary" href="/dashboard" data-track="dashboard_cta" data-label="hero">Open dashboard</a>
@@ -89,8 +90,8 @@ export const landingHtml = `<!DOCTYPE html>
             </figure>
         </section>
 
-        <div class="providers" aria-label="Works with Claude Code, Codex, opencode, and Grok">
-            <span>${iconClaude} Claude Code</span><span>${iconCodex} Codex</span><span>${iconOpencode} opencode</span><span>${iconGrok} Grok</span>
+        <div class="providers" aria-label="Works with Claude Code, Codex, opencode, Grok, and Antigravity">
+            <span>${iconClaude} Claude Code</span><span>${iconCodex} Codex</span><span>${iconOpencode} opencode</span><span>${iconGrok} Grok</span><span>${iconAntigravity} Antigravity</span>
         </div>
 
         <section class="section agent" id="claude-code" aria-labelledby="claude-code-title">
@@ -102,11 +103,22 @@ export const landingHtml = `<!DOCTYPE html>
         </section>
 
         <section class="section agent" id="codex" aria-labelledby="codex-title">
-            <h2 id="codex-title">Codex, too.<span>Crabigator wraps codex, opencode, and grok.</span></h2>
+            <h2 id="codex-title">Codex, too.<span>Crabigator also wraps opencode and Grok Build.</span></h2>
             ${devicePairHtml({
                 capture: codexCapture, command: 'codex', title: 'Add scene-name uniqueness test', reverse: true,
                 label: 'Codex at work in Crabigator, adding a test, with a moving surf scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive and the same surf scene.',
             })}
+        </section>
+
+        <section class="section agent" id="antigravity" aria-labelledby="antigravity-title">
+            <h2 id="antigravity-title">Google Antigravity<span>Run Gemini 4 Neon in your terminal.</span></h2>
+            <div class="antigravity-start">
+                <p>Install <a href="https://antigravity.google/docs/cli/tutorial/">Antigravity CLI</a> and sign in with <code>agy</code>. For Antigravity support, install Crabigator from <a href="https://github.com/samuelclay/crabigator">the main branch</a> with <code>cargo install --git https://github.com/samuelclay/crabigator --locked</code>.</p>
+                <div class="install-command">
+                    <code id="antigravity-command">crabigator antigravity --model gemini-4-neon-high</code>
+                    <button type="button" data-copy-target="antigravity-command" aria-label="Copy Antigravity command">${iconCopy}</button>
+                </div>
+            </div>
         </section>
 
         <section class="section surfaces" id="apps" aria-labelledby="surfaces-title">

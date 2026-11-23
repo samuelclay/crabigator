@@ -4,7 +4,7 @@ Guidance for coding agents (Claude Code, Codex CLI) working in this repository. 
 
 ## What This Project Is
 
-Crabigator is a Rust TUI wrapper around the Claude Code, Codex, opencode, and Grok CLIs. It spawns the assistant CLI in a PTY (pseudo-terminal) and adds status widgets below the interface showing git status, file changes, session statistics, per-turn recaps, and tracked PRs. Sessions can stream to the official dashboard or a compatible self-hosted Cloudflare Worker in `workers/crabigator-api/`.
+Crabigator is a Rust TUI wrapper around the Claude Code, Codex, opencode, Grok, and Google Antigravity CLIs. It spawns the assistant CLI in a PTY (pseudo-terminal) and adds status widgets below the interface showing git status, file changes, session statistics, per-turn recaps, and tracked PRs. Sessions can stream to the official dashboard or a compatible self-hosted Cloudflare Worker in `workers/crabigator-api/`.
 
 Platform selection:
 
@@ -14,6 +14,7 @@ crabigator codex            # Use Codex CLI
 crabigator claude           # Use Claude Code
 crabigator opencode         # Use opencode
 crabigator grok             # Use Grok Build (aliases: grok-build, xai)
+crabigator antigravity      # Use Google Antigravity CLI (aliases: gemini, agy)
 crabigator --platform grok  # Explicit flag
 ```
 
@@ -117,6 +118,7 @@ The application uses a **scroll region approach** to layer UI:
   - `claude_code/`: Claude Code hooks (`stats_hook.py`, `hook_script.rs`) and transcript parsing (writes to `~/.claude/crabigator/`)
   - `codex_cli/`: Codex CLI session log and transcript parsing (reads `~/.codex/sessions`)
   - `opencode/`: opencode integration. Spawns the CLI with `--port` and follows the server's SSE `/event` stream for state, permissions, and the model; writes a normalized transcript log to `/tmp/crabigator-opencode-{session_id}.jsonl` for scrollback, recaps, and PR tracking. opencode's full-screen TUI runs on the alternate screen, which crabigator strips (see `ScrollRegionFilter`) so it paints inside the scroll region on the primary buffer.
+  - `antigravity.rs`: Spawns Google’s `agy` CLI. Its per-session status line identifies the active Gemini conversation and reports state, mode, model, and context. Crabigator reads the conversation transcript for scrollback, tool counts, recaps, and PR tracking.
   - `grok/`: Grok Build TUI integration. Spawns `grok` (found in `~/.grok/bin` if needed). Full-screen TUI is stripped onto the primary buffer like opencode. State comes from `~/.grok/sessions/<encoded-cwd>/<id>/events.jsonl` and the transcript from `updates.jsonl`; no hooks are installed.
 - **hooks/**: `SessionStats` for session time tracking and platform stats integration.
 - **flow/**: The flow column's scenes, a Rust port of [flow](https://github.com/robdmac/flow) (MIT, `src/flow/LICENSE`). `flow.rs` holds `FlowColumn`: the session's scene, stepped in the event loop at its own pace (~14 fps busy, 8 calm), fed by Claude Code's hooks as they fire (`hooks.rs`) or by other assistants' stats (`feed.rs`), with fade off unless `[flow] fade` is set (`activity.rs`). `claim.rs` claims a different scene per live session (like session marks) and takes the hue of the session mark (`palette.rs`). `scenes/` has one file per scene; `sky.rs` and `clouds.rs` are the balloon's and rockets' world. Each scene's `frames_match_flow` test replays flow's own frames (`testdata/`, recorded by `make flow-reference FLOW_DIR=../flow`) cell for cell, so keep the port exact (`js.rs`). **`src/flow/FORK.md` is the fork log**: when porting a new upstream flow commit, follow it and add a row. `crates/flow-render` builds the same scenes (its `src/flow` is a symlink to this folder) for the apps and the dashboard: a static library for iOS, a JNI library for Android, and WebAssembly for the dashboard, all through `crates/flow-render/build.sh` with rustup's cargo. The desktop sends each session's scene and dials as a `flow` cloud event, and each client runs the scene itself.
