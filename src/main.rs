@@ -35,7 +35,7 @@ mod update;
 #[cfg(test)]
 mod fixtures_tests;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::{
     cursor::Show,
     event::{DisableBracketedPaste, EnableBracketedPaste},
@@ -184,8 +184,22 @@ fn generate_session_id() -> String {
     format!("{:x}{:x}", pid, timestamp % 0xFFFFFFFF)
 }
 
+fn main() -> Result<()> {
+    let mut args = env::args_os().skip(1);
+    if args.next().as_deref() == Some(std::ffi::OsStr::new("--antigravity-status")) {
+        let dir = args
+            .next()
+            .context("Missing Antigravity status directory")?;
+        return platforms::antigravity::save_status(
+            std::path::Path::new(&dir),
+            args.next().as_deref() == Some(std::ffi::OsStr::new("--forward")),
+        );
+    }
+    run()
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn run() -> Result<()> {
     let args = parse_args();
 
     // Handle subcommands that don't need the full app setup

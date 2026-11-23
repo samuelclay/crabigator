@@ -133,7 +133,7 @@ const CODEX_QUESTIONS_OPEN_DELAY: Duration = Duration::from_millis(150);
 /// A remote answer that is only an option number, such as a `choose_option`
 /// call. Codex's question views pick an option with its digit key, but take
 /// a paste as typed text: the "Other" answer, or a note on the current row.
-fn codex_option_digit(text: &str) -> Option<u8> {
+fn option_digit(text: &str) -> Option<u8> {
     match text.trim().as_bytes() {
         [digit @ b'1'..=b'9'] => Some(*digit),
         _ => None,
@@ -2909,6 +2909,7 @@ impl App {
             self.platform.kind(),
             crate::platforms::PlatformKind::Claude
                 | crate::platforms::PlatformKind::Grok
+                | crate::platforms::PlatformKind::Antigravity
                 | crate::platforms::PlatformKind::Codex
         ) && matches!(
             self.session_stats.active_prompt(),
@@ -3025,8 +3026,14 @@ impl App {
             self.hidden_ticks.fill(screen);
         }
 
-        let question_ui =
-            (self.platform.kind() == crate::platforms::PlatformKind::Grok).then_some("grok_card");
+        let question_ui = match self.platform.kind() {
+            PlatformKind::Grok => Some("grok_card"),
+            PlatformKind::Antigravity => {
+                let screen = crate::parsers::strip_ansi_for_debug(&screen_to_string(self.platform_pty.screen()));
+                Some(if screen.lines().rev().take(3).any(|l| l.contains("enter Submit · esc Back")) { "antigravity_write_in" } else { "antigravity" })
+            }
+            _ => None,
+        };
 
         // Build and send the event
         let event = SessionEventBuilder::prompt(
@@ -3121,6 +3128,7 @@ impl App {
                     | CodexQuestionPrompt::QuestionsWaiting
             )
         );
+        let picks_by_digit = picks_by_digit || (platform_kind == PlatformKind::Antigravity && matches!(self.session_stats.effective_state(), SessionState::Question | SessionState::Permission));
         let mut questions_waiting = codex_question == Some(CodexQuestionPrompt::QuestionsWaiting);
         let mut hidden_tick_changed = false;
         let open_questions = |pty: &mut PlatformPty, waiting: &mut bool| -> Result<()> {
@@ -3175,7 +3183,7 @@ impl App {
             }
             // Handle incoming text answers
             while let Some(answer) = client.try_recv_answer() {
-                if let Some(digit) = codex_option_digit(&answer).filter(|_| picks_by_digit) {
+                if let Some(digit) = option_digit(&answer).filter(|_| picks_by_digit) {
                     self.platform.note_user_input();
                     open_questions(&mut self.platform_pty, &mut questions_waiting)?;
                     self.platform_pty.write(&[digit])?;
@@ -3563,9 +3571,9 @@ mod tests {
 
     #[test]
     fn reads_bare_option_numbers_for_codex() {
-        assert_eq!(codex_option_digit(" 2\n"), Some(b'2'));
-        assert_eq!(codex_option_digit("0"), None);
-        assert_eq!(codex_option_digit("12"), None);
-        assert_eq!(codex_option_digit("2 more things"), None);
+        assert_eq!(option_digit(" 2\n"), Some(b'2'));
+        assert_eq!(option_digit("0"), None);
+        assert_eq!(option_digit("12"), None);
+        assert_eq!(option_digit("2 more things"), None);
     }
 }

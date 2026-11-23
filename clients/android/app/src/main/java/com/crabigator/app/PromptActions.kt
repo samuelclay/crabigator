@@ -49,6 +49,21 @@ object PromptActions {
         val count = q.array("options").size
         var cursor = prompt.optInt("cursor_row", 1)
         val grok = prompt.text("ui") == "grok_card"
+        if (prompt.text("ui").startsWith("antigravity")) {
+            val editing = prompt.text("ui") == "antigravity_write_in"
+            if (option != null) {
+                if (editing) key("escape")
+                type((option + 1).toString())
+            } else {
+                if (!text.isNullOrBlank()) {
+                    if (!editing) type((count + 1).toString())
+                    if (editing) { type("\u0005"); repeat(prompt.text("custom_text").length) { key("backspace") } }
+                    type(text)
+                }
+                key("enter")
+            }
+            return Action("key-sequence", JSONObject().put("steps", steps))
+        }
         fun move(target: Int) { repeat(kotlin.math.abs(target - cursor).coerceAtMost(100)) { key(if (target > cursor) "down" else "up") }; cursor = target }
         if (option != null) {
             if (hasPreview(prompt)) {

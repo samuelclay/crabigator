@@ -223,7 +223,7 @@ struct NewSessionForm: View {
     private var busy: Bool { model.sessionLaunch.busy }
     private var message: String { model.sessionLaunch.message }
     private var failed: Bool { model.sessionLaunch.failed }
-    private let assistants = [("Codex", "codex"), ("Claude", "claude"), ("OpenCode", "opencode"), ("Grok", "grok")]
+    private let assistants = [("Codex", "codex"), ("Claude", "claude"), ("OpenCode", "opencode"), ("Grok", "grok"), ("Antigravity", "antigravity")]
     private var desktops: [Session] {
         var seen = Set<String>()
         return model.sessions.filter { $0.active && seen.insert($0.machine).inserted }

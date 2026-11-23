@@ -129,11 +129,16 @@ impl PermissionPrompt {
         // Use `contains` not `starts_with` because the question may be prefixed
         // (e.g., "Claude has written up a plan and is ready to execute. Would you like to proceed?")
         let lines: Vec<&str> = stripped.lines().collect();
+        // Antigravity leaves previous numbered answers above the current permission card.
+        let lines = if let Some(start) = lines.iter().rposition(|line| line.trim() == "Requesting permission for:") {
+            &lines[start..]
+        } else { &lines[..] };
         let question_idx = lines.iter().position(|line| {
             let trimmed = line.trim();
             trimmed.contains("Do you want to")
                 || trimmed.contains("Would you like to")
                 || trimmed.contains("Implement this plan?")
+                || trimmed == "Run this command?"
         });
 
         // Fallback: if no question found, use the ❯ cursor line as anchor

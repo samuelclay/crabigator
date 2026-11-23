@@ -637,6 +637,7 @@ export const styleJs = `
                             <button type="button" onclick="spawnSessionFromMenu(this, 'codex')">Codex</button>
                             <button type="button" onclick="spawnSessionFromMenu(this, 'opencode')">opencode</button>
                             <button type="button" onclick="spawnSessionFromMenu(this, 'grok')">Grok</button>
+                            <button type="button" onclick="spawnSessionFromMenu(this, 'antigravity')">Antigravity</button>
                         </div>
                         \${sessionCards.length === 0 ? \`<button class="project-close-btn" onclick="event.stopPropagation(); closeProject('\${escapeHtml(cwd)}')" title="Remove project">×</button>\` : ''}
                     </div>

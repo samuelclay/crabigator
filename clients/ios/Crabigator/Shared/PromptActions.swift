@@ -71,6 +71,22 @@ enum PromptActions {
         }
         guard let q = question(p) else { throw invalid("This question is no longer available.") }
         let count = q.array("options").count, grok = p.text("ui") == "grok_card", multi = q.bool("multi_select")
+        if p.text("ui").hasPrefix("antigravity") {
+            let editing = p.text("ui") == "antigravity_write_in"
+            if editing && (option != nil || !toggling.isEmpty) { key("escape") }
+            for index in toggling { type(String(index + 1)) }
+            if let option {
+                type(String(option + 1))
+            } else {
+                if let text, !text.isEmpty {
+                    if !editing || !toggling.isEmpty { type(String(count + 1)) }
+                    if editing { type("\u{5}"); for _ in p.text("custom_text") { key("backspace") } }
+                    type(text)
+                }
+                key("enter")
+            }
+            return TerminalAction(route: "key-sequence", body: ["steps": steps])
+        }
         var cursor = p.int("cursor_row", 1)
         func move(_ target: Int) { for _ in 0..<min(100, abs(target - cursor)) { key(target > cursor ? "down" : "up") }; cursor = target }
         func pick(_ option: Int) {

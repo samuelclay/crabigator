@@ -60,7 +60,7 @@ export const toolDefs: ToolDef[] = [
                     description: 'ready, thinking, permission, question, or complete',
                 },
                 cwd: { type: 'string', description: 'Exact working directory' },
-                platform: { type: 'string', description: 'claude, codex, grok, or opencode' },
+                platform: { type: 'string', description: 'claude, codex, grok, opencode, or antigravity' },
             },
         },
         handler: async (args, auth, env) => {
@@ -380,13 +380,13 @@ export const toolDefs: ToolDef[] = [
     },
     {
         name: 'spawn_session',
-        description: 'Ask a live desktop to open a new Claude, Codex, opencode, or Grok session in cwd. Ghostty opens a tab in an existing window.',
+        description: 'Ask a live desktop to open a new Claude, Codex, opencode, Grok, or Antigravity session in cwd. Ghostty opens a tab in an existing window.',
         inputSchema: {
             type: 'object',
             required: ['cwd'],
             properties: {
                 cwd: { type: 'string', description: 'Working directory for the new session' },
-                platform: { type: 'string', description: 'claude, codex, grok, or opencode' },
+                platform: { type: 'string', description: 'claude, codex, grok, opencode, or antigravity' },
             },
         },
         handler: async (args, auth, env) => {

@@ -68,7 +68,7 @@ const sessionId = {
 };
 const platform = {
     type: 'string',
-    description: 'Only sessions on this platform: claude, codex, grok, or opencode.',
+    description: 'Only sessions on this platform: claude, codex, grok, opencode, or antigravity.',
 };
 const cwd = {
     type: 'string',
@@ -77,7 +77,7 @@ const cwd = {
 
 const commonPayload = {
     session_id: { type: 'string', description: 'Cloud session id.' },
-    platform: { type: 'string', description: 'claude, codex, grok, or opencode.' },
+    platform: { type: 'string', description: 'claude, codex, grok, opencode, or antigravity.' },
     cwd: { type: 'string', description: 'Working directory.' },
     title: { type: 'string', description: 'Current session title.' },
     url: { type: 'string', description: 'Dashboard URL for this session.' },

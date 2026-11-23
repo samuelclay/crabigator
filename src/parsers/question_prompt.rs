@@ -122,7 +122,8 @@ impl ScreenRow {
     /// Whether this row still shows the "Type something" placeholder.
     pub fn is_placeholder(&self) -> bool {
         let label = self.label.trim_end_matches('.').trim();
-        label == TYPE_SOMETHING
+        label == "Write-in"
+            || label == TYPE_SOMETHING
             || label.eq_ignore_ascii_case(TYPE_YOUR_ANSWER)
             || CODEX_PLACEHOLDERS.contains(&label)
     }
@@ -183,6 +184,74 @@ fn is_divider(line: &str) -> bool {
     !trimmed.is_empty() && trimmed.chars().all(|c| c == '─' || c == '━')
 }
 
+fn parse_antigravity(screen: &str) -> Option<QuestionScreen> {
+    let plain = strip_ansi_codes(screen);
+    let lines: Vec<_> = plain.lines().map(str::trim).collect();
+    let footer = lines.iter().rposition(|s| {
+        (s.starts_with("↑/↓ Navigate") && s.ends_with("esc Skip"))
+            || s.starts_with("enter Submit · esc Back")
+    })?;
+    if lines[footer + 1..].iter().filter(|s| !s.is_empty()).count() > 1 {
+        return None;
+    }
+    let header = lines[..footer]
+        .iter()
+        .rposition(|s| s.starts_with("Question ") && s.contains(": "))?;
+    let (pages, question) = lines[header].strip_prefix("Question ")?.split_once(": ")?;
+    let (n, _) = pages.split_once('/')?;
+    let page_index = n.parse::<usize>().ok()?.checked_sub(1)?;
+    let mut rows = Vec::new();
+    let mut question = question.to_owned();
+    for line in &lines[header + 1..footer] {
+        if *line == "Your answer:" {
+            break;
+        }
+        let (cursor, text) = match line.strip_prefix("> ") {
+            Some(row) => (true, row),
+            None => (false, *line),
+        };
+        let Some((number, label)) = text
+            .split_once(". ")
+            .and_then(|(n, s)| Some((n.parse::<u32>().ok()?, s)))
+        else {
+            if rows.is_empty() && !line.is_empty() {
+                question.push(' ');
+                question.push_str(line);
+            }
+            continue;
+        };
+        let (checked, label) = if let Some(s) = label.strip_prefix("[x] ") {
+            (Some(true), s)
+        } else if let Some(s) = label.strip_prefix("[ ] ") {
+            (Some(false), s)
+        } else {
+            (None, label)
+        };
+        rows.push(ScreenRow {
+            number,
+            checked,
+            label: label.to_owned(),
+            cursor,
+        });
+    }
+    if lines[footer].starts_with("enter Submit · esc Back") {
+        if let (Some(i), Some(row)) = (
+            lines[header..footer]
+                .iter()
+                .rposition(|s| *s == "Your answer:"),
+            rows.last_mut(),
+        ) {
+            row.label = lines[header + i + 1..footer].join(" ").trim().to_owned();
+        }
+    }
+    (!rows.is_empty()).then_some(QuestionScreen::Page {
+        question,
+        rows,
+        page_index: Some(page_index),
+        submit_row: None,
+    })
+}
+
 /// The dialog's key hints, its last line.
 fn is_footer(line: &str) -> bool {
     line.trim().starts_with("Enter to select")
@@ -195,6 +264,7 @@ impl QuestionScreen {
         parse_claude(screen_content)
             .or_else(|| parse_grok(screen_content))
             .or_else(|| parse_codex(screen_content))
+            .or_else(|| parse_antigravity(screen_content))
     }
 
     /// The question on a Codex page, for when Codex's log has not named it:
@@ -843,6 +913,21 @@ fn parse_grok(screen_content: &str) -> Option<QuestionScreen> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mirrors_antigravity_checkbox_cursor_and_write_in() {
+        let screen = "Question 2/2: Which fruits?\n  1. [ ] pear\n> 2. [x] lime\n  3. Write-in...\n↑/↓ Navigate · space Toggle · enter Submit · esc Skip\nesc to cancel";
+        let Some(QuestionScreen::Page {
+            rows, page_index, ..
+        }) = QuestionScreen::parse(screen)
+        else {
+            panic!("expected question")
+        };
+        assert_eq!(page_index, Some(1));
+        assert_eq!(rows[1].checked, Some(true));
+        assert!(rows[1].cursor && rows[2].is_placeholder());
+        assert!(QuestionScreen::parse(&format!("{screen}\nYou chose lime.\n> ")).is_none());
+    }
 
     #[test]
     fn follows_preview_then_long_second_and_plain_third_pages() {

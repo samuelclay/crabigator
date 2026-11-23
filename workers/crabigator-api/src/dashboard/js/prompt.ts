@@ -352,7 +352,8 @@ export const promptJs = `
         // where the cursor ended up.
         function leaveTextRowSteps(prompt, q, grok) {
             const textRow = (q?.options?.length || 0) + 1;
-            if (prompt?.cursor_row !== textRow) return [];
+            if (prompt?.ui === 'antigravity_write_in') return [{ type: 'key', key: 'escape' }];
+            if (prompt?.ui === 'antigravity' || prompt?.cursor_row !== textRow) return [];
             if (grok) {
                 prompt.cursor_row = Math.max(1, textRow - 1);
                 return [{ type: 'key', key: 'escape' }];
@@ -407,7 +408,13 @@ export const promptJs = `
             const grok = isGrokCard(prompt);
 
             const steps = [];
-            if (grok) {
+            if (prompt.ui?.startsWith('antigravity')) {
+                if (text) {
+                    if (prompt.ui !== 'antigravity_write_in') steps.push({ type: 'text', text: String(textRow) });
+                    steps.push(...clearTextSteps(existing), { type: 'text', text });
+                }
+                steps.push({ type: 'key', key: 'enter' });
+            } else if (grok) {
                 steps.push(...leaveTextRowSteps(prompt, q, true));
                 if (text && text !== existing) {
                     steps.push({ type: 'text', text: 'z' });
@@ -607,7 +614,10 @@ export const promptJs = `
             const grok = isGrokCard(prompt);
 
             const steps = [];
-            if (grok) {
+            if (prompt?.ui?.startsWith('antigravity')) {
+                if (prompt.ui !== 'antigravity_write_in') steps.push({ type: 'text', text: String(textRow) });
+                steps.push(...clearTextSteps(prompt.custom_text));
+            } else if (grok) {
                 steps.push({ type: 'text', text: 'z' });
                 steps.push(...backspaceSteps(prompt.custom_text));
             } else if (screenDriven) {

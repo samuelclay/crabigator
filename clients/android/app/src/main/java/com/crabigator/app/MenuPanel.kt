@@ -281,7 +281,7 @@ internal val LocalAccountSource = compositionLocalOf<(suspend () -> JSONObject)?
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Assistant", color = Muted, fontSize = 13.sp)
-        listOf("Codex" to "codex", "Claude" to "claude", "OpenCode" to "opencode", "Grok" to "grok").chunked(2).forEach { row ->
+        listOf("Codex" to "codex", "Claude" to "claude", "OpenCode" to "opencode", "Grok" to "grok", "Antigravity" to "antigravity").chunked(2).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 row.forEach { (label, value) ->
                     FilterChip(platform == value, { platform = value }, label = { Text(label) }, enabled = !busy, modifier = Modifier.weight(1f).heightIn(min = 44.dp))

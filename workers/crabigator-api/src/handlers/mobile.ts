@@ -70,7 +70,7 @@ export async function spawnOnSessionDesktop(request: Request, env: Env, sessionI
     if ('error' in access) return access.error;
     const body = await request.json().catch(() => null) as { cwd?: unknown; platform?: unknown } | null;
     if (!body || typeof body.cwd !== 'string' || !body.cwd.startsWith('/') || body.cwd.includes('\0')
-        || typeof body.platform !== 'string' || !['claude', 'codex', 'opencode', 'grok'].includes(body.platform)) {
+        || typeof body.platform !== 'string' || !['claude', 'codex', 'opencode', 'grok', 'antigravity'].includes(body.platform)) {
         return jsonResponse({ error: 'Choose an assistant and enter an absolute folder path.' }, 400);
     }
     const stub = env.SESSION.get(env.SESSION.idFromName(sessionId));

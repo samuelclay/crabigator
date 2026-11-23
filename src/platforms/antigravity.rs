@@ -10,7 +10,10 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
-use super::{ClaudeMode, ContextUsage, Platform, PlatformKind, PlatformStats, SessionState};
+use super::{
+    ActivePrompt, ClaudeMode, ContextUsage, Platform, PlatformKind, PlatformStats, Question,
+    QuestionOption, SessionState,
+};
 
 #[derive(Default)]
 pub struct Antigravity {
@@ -23,36 +26,71 @@ struct History {
     stats: PlatformStats,
     offset: u64,
     awaiting_reply: bool,
+    pending_tool: Option<Value>,
 }
 
+#[cfg(not(windows))]
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(windows)]
+fn quote(value: &str) -> String {
+    format!("\"{value}\"")
+}
+
+/// The CLI runs this short-lived command on each status change. Publish a
+/// complete snapshot before passing the original input to a user's status line.
+pub fn save_status(dir: &Path, forward: bool) -> Result<()> {
+    use std::io::{Read, Write};
+    let mut input = Vec::new();
+    io::stdin().read_to_end(&mut input)?;
+    let mut value: Value = serde_json::from_slice(&input)?;
+    if let Some(object) = value.as_object_mut() {
+        object.retain(|key, _| {
+            matches!(
+                key.as_str(),
+                "conversation_id"
+                    | "transcript_path"
+                    | "agent_state"
+                    | "model"
+                    | "context_window"
+                    | "cycle_mode"
+                    | "tool_confirmation_pending"
+            )
+        });
+    }
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    serde_json::to_writer(tmp.as_file_mut(), &value)?;
+    tmp.persist(dir.join("status.json"))?;
+    if forward {
+        io::stdout().write_all(&input)?;
+    }
+    Ok(())
 }
 
 fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_slice(&fs::read(path).ok()?).ok()
 }
 
-fn status_settings(settings: &mut Value, dir: &Path, saved: Option<&Value>) {
+fn status_settings(settings: &mut Value, dir: &Path, exe: &Path, saved: Option<&Value>) {
     let mut line = settings
         .get("statusLine")
         .or(saved)
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let file = quote(&dir.join("status.json").to_string_lossy());
-    let mut command = format!("umask 077; cat > {file}.tmp && mv {file}.tmp {file}");
+    let mut command = format!(
+        "{} --antigravity-status {}",
+        quote(&exe.to_string_lossy()),
+        quote(&dir.to_string_lossy())
+    );
     if let Some(previous) = line
         .get("command")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
     {
-        // agy expands a leading tilde before handing the command to sh.
-        let previous = previous
-            .strip_prefix("~/")
-            .map(|tail| format!("\"$HOME\"/{tail}"))
-            .unwrap_or_else(|| previous.to_owned());
-        command.push_str(&format!(" && sh -c {} < {file}", quote(&previous)));
+        command.push_str(&format!(" --forward | ({previous})"));
     } else {
         line.insert("stack_with_default".into(), json!(true));
     }
@@ -115,9 +153,13 @@ impl Platform for Antigravity {
         };
         let saved = dirs::home_dir()
             .and_then(|home| read_json(&home.join(".gemini/antigravity-cli/settings.json")));
+        let Ok(exe) = std::env::current_exe() else {
+            return args;
+        };
         status_settings(
             &mut settings,
             dir.path(),
+            &exe,
             saved.as_ref().and_then(|v| v.get("statusLine")),
         );
         let config = dir.path().join("settings.json");
@@ -176,12 +218,7 @@ impl History {
         if self.stats.native_session_id.as_deref() != id {
             *self = History::default();
             self.stats.native_session_id = id.map(str::to_owned);
-            if let Some(id) = self
-                .stats
-                .native_session_id
-                .as_deref()
-                .filter(|s| uuid::Uuid::parse_str(s).is_ok())
-            {
+            if let Some(id) = id {
                 super::link_session_dir(id);
             }
         }
@@ -224,8 +261,25 @@ impl History {
             Some("auto" | "accept-edits") => ClaudeMode::AutoAccept,
             _ => ClaudeMode::Normal,
         };
+        stats.active_prompt = None;
         let state = if snapshot["tool_confirmation_pending"] == true {
+            let call = self.pending_tool.as_ref();
+            stats.active_prompt = Some(ActivePrompt::Permission {
+                tool_name: call
+                    .and_then(|c| c["name"].as_str())
+                    .unwrap_or("Antigravity")
+                    .to_owned(),
+                tool_input: call.and_then(|c| c.get("args")).cloned(),
+            });
             SessionState::Permission
+        } else if snapshot["agent_state"] == "tool_use"
+            && self
+                .pending_tool
+                .as_ref()
+                .is_some_and(|c| c["name"] == "ask_question")
+        {
+            stats.active_prompt = self.pending_tool.as_ref().and_then(question_prompt);
+            SessionState::Question
         } else {
             match snapshot["agent_state"].as_str() {
                 Some("working" | "tool_use" | "reviewing") => SessionState::Thinking,
@@ -247,6 +301,12 @@ impl History {
             .as_str()
             .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
             .map(|d| d.timestamp_millis() as f64 / 1000.0);
+        if matches!(
+            entry["type"].as_str(),
+            Some("GENERIC" | "USER_INPUT" | "PLANNER_RESPONSE" | "ERROR_MESSAGE")
+        ) {
+            self.pending_tool = None;
+        }
         if user_prompt(entry).is_some() {
             self.stats.prompts += 1;
             self.stats.prompts_changed_at = time;
@@ -259,6 +319,7 @@ impl History {
             .as_array()
             .map(Vec::as_slice)
             .unwrap_or_default();
+        self.pending_tool = calls.last().cloned();
         for call in calls {
             if let Some(name) = call["name"].as_str() {
                 *self.stats.tools.entry(name.to_owned()).or_default() += 1;
@@ -276,6 +337,37 @@ impl History {
             self.awaiting_reply = false;
         }
     }
+}
+
+fn question_prompt(call: &Value) -> Option<ActivePrompt> {
+    let raw = &call["args"]["questions"];
+    let decoded;
+    let questions = if let Some(s) = raw.as_str() {
+        decoded = serde_json::from_str::<Value>(s).ok()?;
+        decoded.as_array()?
+    } else {
+        raw.as_array()?
+    };
+    let questions = questions
+        .iter()
+        .filter_map(|q| {
+            Some(Question {
+                question: q["question"].as_str()?.to_owned(),
+                multi_select: q["is_multi_select"].as_bool().unwrap_or(false),
+                options: q["options"]
+                    .as_array()?
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|label| QuestionOption {
+                        label: label.to_owned(),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            })
+        })
+        .collect::<Vec<_>>();
+    (!questions.is_empty()).then_some(ActivePrompt::Question { questions })
 }
 
 /// Discard the environment and settings that agy appends to a user's request.
@@ -335,4 +427,78 @@ pub fn read_transcript(path: &Path, offset: u64) -> io::Result<(String, u64)> {
         }
     }
     Ok((out, offset))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resumes_the_native_conversation_and_preserves_settings() {
+        let platform = Antigravity::default();
+        assert_eq!(PlatformKind::parse("gemini"), Some(platform.kind()));
+        assert_eq!(platform.command(), "agy");
+        let args = platform.spawn_args(vec!["--resume".into(), "chosen-id".into(), "--settings".into(),
+            r#"{"statusLine":{"command":"my-status","stack_with_default":true},"permissions":{"ask":["command(*)"]}}"#.into()]);
+        assert_eq!(&args[..3], ["--conversation", "chosen-id", "--settings"]);
+        let settings = read_json(Path::new(&args[3])).unwrap();
+        assert_eq!(settings["permissions"]["ask"][0], "command(*)");
+        assert!(settings["statusLine"]["command"]
+            .as_str()
+            .unwrap()
+            .contains("--forward | (my-status)"));
+    }
+
+    #[test]
+    fn follows_the_cli_transcript_when_status_reports_the_app_directory() {
+        use std::io::Write;
+        let root = tempfile::tempdir().unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let snapshot = json!({"conversation_id": id, "agent_state":"tool_use",
+            "transcript_path": root.path().join("missing-app-log")});
+        let path = transcript_path(&snapshot, &id, Some(root.path())).unwrap();
+        assert!(path.starts_with(root.path().join(".gemini/antigravity-cli/brain").join(&id)));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut log = fs::File::create(&path).unwrap();
+        let mut history = History::default();
+        let mut status = snapshot;
+        status["transcript_path"] = json!(path);
+        writeln!(log,"{}", json!({"type":"USER_INPUT","content":"<USER_REQUEST>\nChoose\n</USER_REQUEST>\n<ADDITIONAL_METADATA>ignored</ADDITIONAL_METADATA>"})).unwrap();
+        writeln!(log,"{}",json!({"type":"PLANNER_RESPONSE","thinking":"private reasoning","tool_calls":[{"name":"ask_question","args":{"questions":r#"[{"question":"Which?","options":["Blue","Green"],"is_multi_select":false}]"#}}]})).unwrap();
+        history.update(&status).unwrap();
+        assert_eq!(history.stats.state, SessionState::Question);
+        assert!(
+            matches!(history.stats.active_prompt, Some(ActivePrompt::Question {ref questions}) if questions[0].options[1].label=="Green")
+        );
+        let (text, offset) = read_transcript(&path, 0).unwrap();
+        assert!(
+            text.contains("> Choose")
+                && !text.contains("ADDITIONAL_METADATA")
+                && !text.contains("private reasoning")
+        );
+        writeln!(log, "{}", json!({"type":"GENERIC","content":"Green"})).unwrap();
+        writeln!(
+            log,
+            "{}",
+            json!({"type":"PLANNER_RESPONSE","content":"You chose Green."})
+        )
+        .unwrap();
+        status["agent_state"] = json!("idle");
+        history.update(&status).unwrap();
+        history.update(&status).unwrap();
+        assert_eq!(
+            (
+                history.stats.prompts,
+                history.stats.completions,
+                history.stats.total_tool_calls()
+            ),
+            (1, 1, 1)
+        );
+        assert!(history.stats.active_prompt.is_none());
+        assert_eq!(history.stats.state, SessionState::Complete);
+        assert!(read_transcript(&path, offset)
+            .unwrap()
+            .0
+            .contains("You chose Green."));
+    }
 }

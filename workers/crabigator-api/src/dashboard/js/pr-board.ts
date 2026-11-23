@@ -643,10 +643,11 @@ export const prBoardJs = `
 
         // Provider markers: ᛝ Claude, ⟁ Codex, ↯ Grok, ▣ opencode.
         function prbStripMarker(title) {
-            return String(title || '').replace(/^[ᛝ⟁↯✦▣]+\\s+/, '').trim();
+            return String(title || '').replace(/^[ᛝ⟁↯✦✧▣]+\\s+/, '').trim();
         }
         function prbMarker(platform) {
             if (platform === 'codex') return '⟁ ';
+            if (platform === 'antigravity') return '✧ ';
             if (platform === 'grok') return '↯ ';
             if (platform === 'opencode') return '▣ ';
             return 'ᛝ ';
@@ -656,8 +657,8 @@ export const prBoardJs = `
             return prbMarker(s.platform) + (prbStripMarker(s.title) || s.dir_name || 'session');
         }
         function prbProviderMarkers(sessions) {
-            const order = ['claude', 'codex', 'grok', 'opencode'];
-            const glyphs = { claude: 'ᛝ', codex: '⟁', grok: '↯', opencode: '▣' };
+            const order = ['claude', 'codex', 'grok', 'opencode', 'antigravity'];
+            const glyphs = { claude: 'ᛝ', codex: '⟁', grok: '↯', opencode: '▣', antigravity: '✧' };
             const present = new Set((sessions || []).map(s => s.platform));
             let symbols = '';
             for (const platform of order) {
