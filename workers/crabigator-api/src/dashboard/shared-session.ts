@@ -33,6 +33,12 @@ ${widgetsCss}
 ${recapCss}
 ${modulesCss}
 ${viewPanelCss}
+@media (prefers-reduced-motion: no-preference) {
+    @keyframes shared-session-enter { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+    .shared-dashboard .header, .shared-dashboard .session-header, #banner { animation: shared-session-enter .32s cubic-bezier(.2,1.3,.4,1) backwards; }
+    .shared-dashboard .session-header { animation-delay: 45ms; }
+    .shared-dashboard .terminal.has-output { animation: shared-session-enter .32s cubic-bezier(.22,1,.36,1); }
+}
 body.shared-dashboard {margin:0; padding:0; height:100vh; height:100dvh; display:flex; flex-direction:column; overflow:hidden; background:var(--bg-deep); color:var(--text-bright); font-family:var(--font-ui); -webkit-font-smoothing:antialiased}
 [hidden] {display:none!important}
 .shared-dashboard .header {position:static; flex:none}
@@ -180,6 +186,7 @@ async function refresh() {
                 el('screen-view').innerHTML = ansiToHtml(d.screen || (empty ? 'No terminal output was saved for this session.' : ''));
             });
         }
+        if (view.scrollbackRendered || d.screen || empty) terminal.classList.add('has-output');
         modules(d);
         const flow = JSON.stringify(d.flow);
         if (flow !== lastFlow) { applyFlowEvent('view', d.flow); lastFlow = flow; }

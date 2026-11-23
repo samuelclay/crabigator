@@ -44,20 +44,28 @@ export const modulesJs = `
             const saved = openSessionModules.get(sessionId) || new Set();
             openSessionModules.set(sessionId, saved);
             sections.forEach(([key, title, prefixes], index) => {
-                const section = document.createElement('details');
+                const section = document.createElement('div');
                 section.className = 'session-module module-' + key;
                 section.id = 'module-' + key + '-' + sessionId;
                 section.style.setProperty('--module-order', index);
-                section.open = saved.has(key);
-                section.innerHTML = '<summary><span class="module-arrow">›</span><span class="module-label">' + title
-                    + '</span><span class="module-preview"></span><span class="module-age"></span></summary><div class="module-body"></div>';
+                section.innerHTML = '<button type="button" class="module-summary"><span class="module-arrow" aria-hidden="true">›</span><span class="module-label">' + title
+                    + '</span><span class="module-preview"></span><span class="module-age"></span></button>'
+                    + '<div class="module-reveal"><div class="module-clip"><div class="module-body"></div></div></div>';
+                const summary = section.querySelector('.module-summary');
+                const reveal = section.querySelector('.module-reveal');
+                reveal.id = section.id + '-content';
+                summary.setAttribute('aria-controls', reveal.id);
+                function setOpen(open) {
+                    summary.setAttribute('aria-expanded', String(open));
+                    reveal.inert = !open;
+                    if (open) saved.add(key); else saved.delete(key);
+                }
+                setOpen(saved.has(key));
+                summary.onclick = () => setOpen(!saved.has(key));
                 const body = section.querySelector('.module-body');
                 prefixes.forEach(prefix => {
                     const node = document.getElementById(prefix + sessionId);
                     if (node) body.appendChild(node);
-                });
-                section.addEventListener('toggle', () => {
-                    if (section.open) saved.add(key); else saved.delete(key);
                 });
                 if (key === 'recap') {
                     const list = document.createElement('div');
