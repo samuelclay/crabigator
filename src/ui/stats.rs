@@ -12,7 +12,7 @@ use crate::cloud::CloudStatus;
 use crate::hooks::SessionStats;
 use crate::platforms::{ContextUsage, SessionState};
 use crate::session_mark::SessionMark;
-use crate::terminal::escape::{self, bg, color, fg, RESET};
+use crate::terminal::escape::{self, bg, color, fg, RESET, RESET_UNDERLINE, UNDERLINE};
 use crate::ui::cooldown::{tint_text, Tint};
 
 /// Braille spinner frames for the thinking animation
@@ -249,7 +249,10 @@ fn format_cloud_header(
             if let Some(id) = &status.session_id {
                 let short: String = id.chars().take(8).collect();
                 let linked = match &status.share_url {
-                    Some(url) => escape::hyperlink(url.as_str(), &short),
+                    Some(url) => escape::hyperlink(
+                        url.as_str(),
+                        &format!("{UNDERLINE}{short}{RESET_UNDERLINE}"),
+                    ),
                     None => short.clone(),
                 };
                 let prefix = if label.len() + 1 + short.len() <= available {
@@ -295,7 +298,7 @@ fn build_pair_suffix(code: &str, available: usize) -> Option<(usize, String)> {
     let code_len = code_chars.len();
 
     let make = |link_text: String, visible_text_width: usize| -> (usize, String) {
-        let inner = format!("{}{}{}", dim, link_text, RESET);
+        let inner = format!("{dim}{UNDERLINE}{link_text}{RESET}");
         let linked = escape::hyperlink(&url, &inner);
         let visible_width = prefix_visible + visible_text_width;
         let ansi = format!("{}{}", prefix, linked);
@@ -867,7 +870,7 @@ mod tests {
             );
             assert!(visible(&header) <= width);
             if width >= 8 {
-                assert!(header.contains("01234567"));
+                assert!(header.contains(&format!("{UNDERLINE}01234567{RESET_UNDERLINE}")));
                 assert!(!header.contains("89ab"));
                 assert_eq!(osc_link_target(&header).as_deref(), Some(target));
             }
@@ -1069,6 +1072,7 @@ mod tests {
         // " · Pair: ABC-DEF-GHI" = 3 + 6 + 11 = 20 cols
         assert_eq!(width, 20);
         assert_eq!(visible(&ansi), 20);
+        assert!(ansi.contains(&format!("{UNDERLINE}Pair: ABC-DEF-GHI{RESET}")));
         // The OSC link still points to the full code regardless of tier.
         assert_eq!(
             osc_link_target(&ansi).as_deref(),
@@ -1116,5 +1120,6 @@ mod tests {
         assert!(before.starts_with(' '));
         assert!(before.contains('·'));
         assert!(!before.contains("Pair"));
+        assert!(!before.contains(UNDERLINE));
     }
 }
