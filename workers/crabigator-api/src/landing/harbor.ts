@@ -1,4 +1,4 @@
-import { iconCrabigator, iconWifi } from './icons';
+import { iconCrabigator, iconMicrophone, iconWifi } from './icons';
 import { harborArtJs } from './harbor-art';
 
 const question = 'What color should it glow?';
@@ -11,21 +11,28 @@ export const harborHtml = `
     <svg class="harbor-route" aria-hidden="true"><path/></svg>
     <div class="harbor-courier" aria-hidden="true">${iconCrabigator}</div>
     <div class="harbor-term" aria-hidden="true">
-        <div class="harbor-term-bar"><span class="window-dots"><i></i><i></i><i></i></span><span>~/harbor</span></div>
+        <div class="harbor-term-bar"><span class="window-dots"><i></i><i></i><i></i></span><span>crabigator — claude</span></div>
         <div class="harbor-log">
-            <div class="harbor-command">$ crabigator codex</div>
+            <div class="harbor-welcome"><span class="harbor-clawd"> ▐▛███▜▌
+▝▜█████▛▘
+  ▘▘ ▝▝</span><div><strong>Claude Code</strong><small>Opus · ~/harbor</small></div></div>
             <p data-at=".4" class="harbor-prompt">Light the harbor beacon.</p>
-            <p data-at="2.5">${question}</p>
-            <p data-at="9.4" class="harbor-answer">${answer}</p>
-            <p data-at="10.4" class="harbor-done">✓ Beacon lit.</p>
+            <p data-at="2.5" class="harbor-assistant">${question}</p>
+            <p data-at="9.4" class="harbor-prompt">${answer}</p>
+            <p data-at="10.4" class="harbor-assistant harbor-done">Beacon lit.</p>
         </div>
+        <div class="harbor-input">❯ <i></i></div>
         <i class="harbor-port"></i>
     </div>
     <div class="harbor-phone" aria-hidden="true">
         <div class="harbor-phone-status">9:41 <i></i>${iconWifi}</div>
-        <div class="harbor-app">${iconCrabigator}<strong>Harbor light</strong></div>
-        <div class="harbor-messages"><p data-at="5.4">${question}</p><p class="harbor-bubble">${answer}</p></div>
-        <div class="harbor-composer"><span data-at="6.9" data-until="7.9">${answer}</span><b>↑</b></div>
+        <div class="harbor-app"><b>‹</b><div><strong>Harbor light</strong><small>ClayBook · Live</small></div><span>ᴀA</span></div>
+        <div class="harbor-messages">
+            <p data-at="5.4" class="harbor-assistant">${question}</p>
+            <p data-at="7.9" class="harbor-prompt">${answer}</p>
+            <p data-at="11.2" class="harbor-assistant harbor-done">Beacon lit.</p>
+        </div>
+        <div class="harbor-composer">${iconMicrophone}<span data-at="6.9" data-until="7.9" data-text="${answer}"></span><b>↑</b></div>
         <div class="harbor-home"></div><i class="harbor-port"></i>
     </div>
 </figure>`;
@@ -41,44 +48,55 @@ export const harborCss = `
 .harbor-courier { position:absolute; top:0; left:0; width:26px; height:26px; margin:-13px; opacity:0; filter:drop-shadow(0 0 7px #ffbe80); pointer-events:none; }
 .harbor-courier svg { display:block; width:100%; }
 .harbor-term,.harbor-phone { position:absolute; color:#ecede8; text-align:left; box-shadow:0 12px 30px #07101c65,0 1px 0 #ffffff20 inset; }
-.harbor-term { left:5%; top:17%; width:39%; max-width:436px; border:1px solid #8b929980; background:#101c26f7; border-radius:11px; }
-.harbor-term-bar { display:flex; align-items:center; gap:16px; border-bottom:1px solid #82939a38; background:#c3dad90d; padding:9px 14px; border-radius:11px 11px 0 0; color:#b9c7c9; font:11px 'JetBrains Mono',monospace; }
-.harbor-log { padding:16px 18px; min-height:163px; font:clamp(12px,1.25vw,16px)/1.55 'JetBrains Mono',monospace; }
-.harbor-log p { margin-top:.35em; }
-.harbor-command { color:#8b9ca5; font-size:.85em; margin-bottom:12px; }
-.harbor-prompt::before,.harbor-answer::before { content:'› '; color:var(--peach); }
-.harbor-answer,.harbor-bubble { color:#ffce9d; }
-.harbor-done { color:#acd6bf; }
+.harbor-term { left:5%; top:17%; width:39%; max-width:436px; border:1px solid #7d8188; background:#191918; border-radius:11px; font-family:'JetBrains Mono',monospace; }
+.harbor-term-bar { position:relative; display:flex; justify-content:center; align-items:center; border-bottom:1px solid #454746; background:#303231; padding:7px 0; border-radius:10px 10px 0 0; color:#c2c4c0; font-size:11px; }
+.harbor-term-bar .window-dots { position:absolute; left:12px; }
+.harbor-log { padding:12px 14px 7px; font-size:clamp(12px,1.15vw,15px); line-height:1.45; }
+.harbor-welcome { display:flex; align-items:center; gap:12px; margin-bottom:9px; }
+.harbor-clawd { white-space:pre; font:11px/.98 monospace; color:#df9679; }
+.harbor-welcome strong,.harbor-welcome small { display:block; }
+.harbor-welcome small { color:#aaa9a4; font-size:.8em; }
+.harbor-log p,.harbor-messages p { position:relative; margin:3px 0; min-height:calc(1lh + 4px); padding:2px 5px 2px 1.55em; }
+.harbor-prompt { background:#343432; }
+.harbor-prompt::before,.harbor-assistant::before { position:absolute; left:.4em; }
+.harbor-prompt::before { content:'❯'; color:#d3d0c8; }
+.harbor-assistant::before { content:'●'; color:#d3d0c8; font-size:.85em; top:.32em; }
+.harbor-done::before { color:#94bc90; }
+.harbor-input { color:#c9c9c3; margin:0 14px 10px; padding:3px 5px; border-block:1px solid #535351; font-size:12px; }
+.harbor-input i { display:inline-block; width:.6em; height:1em; vertical-align:-.12em; background:#b7b6b0; }
 .harbor-port { position:absolute; left:100%; top:56%; }
 .harbor-phone { right:7%; top:10%; width:22%; max-width:212px; height:73%; max-height:305px; background:#101c26; border:4px solid #141b22; outline:1.5px solid #828888; border-radius:26px; display:flex; flex-direction:column; }
 .harbor-phone .harbor-port { left:0; top:52%; }
 .harbor-phone-status { display:flex; align-items:center; justify-content:space-between; padding:10px 14px 5px; font-size:10px; font-weight:650; }
 .harbor-phone-status i { border-radius:8px; width:30%; height:10px; background:#070d12; }
 .harbor-phone-status svg { width:14px; height:12px; }
-.harbor-app { display:flex; align-items:center; gap:8px; padding:9px 12px; border-bottom:1px solid #3c4c54; font-size:14px; }
-.harbor-app svg { width:23px; height:23px; }
-.harbor-messages { padding:14px 12px; font-size:clamp(13px,1.2vw,16px); line-height:1.4; }
-.harbor-bubble { width:fit-content; margin:12px 0 0 auto; padding:6px 10px; border-radius:11px 11px 3px 11px; background:#45362e; }
-.harbor-bubble { transition:opacity .2s, transform .26s cubic-bezier(.2,1.25,.4,1); }
-.harbor.awaiting-reply .harbor-bubble { opacity:0; transform:translateY(6px); }
-.harbor-composer { display:flex; align-items:center; justify-content:space-between; gap:4px; margin:auto 8px 6px; padding:4px 5px 4px 9px; border:1px solid #41505a; border-radius:12px; font-size:12px; color:#e5e9e6; }
+.harbor-app { display:flex; align-items:center; gap:6px; padding:5px 10px 7px; border-bottom:1px solid #353c45; color:#67b4fd; }
+.harbor-app b { font-size:20px; font-weight:500; }
+.harbor-app strong,.harbor-app small { display:block; line-height:1.25; }
+.harbor-app strong { font-size:13px; }
+.harbor-app small { color:#91ce96; font-size:10px; }
+.harbor-app > span { margin-left:auto; color:#aab3bc; font-size:12px; }
+.harbor-messages { flex:1; padding:8px 6px; background:#101312; font:clamp(11px,1vw,13px)/1.4 'JetBrains Mono',monospace; }
+.harbor-composer { display:flex; align-items:center; gap:5px; margin:6px 8px; font-size:12px; color:#e5e9e6; }
+.harbor-composer svg { width:15px; flex:none; color:#a5aeb7; }
+.harbor-composer span { flex:1; border:1px solid #41505a; border-radius:11px; padding:4px 6px; }
 .harbor-composer span:empty::before { content:'Reply…'; color:#9aabb6; }
 .harbor-composer b { display:grid; place-items:center; width:20px; height:20px; line-height:1; border-radius:50%; background:#35414a; color:#b6c4c9; }
-.harbor.answering .harbor-composer { border-color:#ba906d; }
+.harbor.answering .harbor-composer span { border-color:#ba906d; }
 .harbor.answering .harbor-composer b { background:#ffbe88; color:#1c2934; }
 .harbor-phone { transition:box-shadow .4s; }
 .harbor.answering .harbor-phone { box-shadow:0 0 0 2px #ffc38a7a,0 0 22px #ffb87b30,0 12px 30px #07101c65; }
-.harbor:not(.answering) .harbor-composer span:not(:empty) { visibility:hidden; }
 .harbor-home { margin:0 auto 7px; width:32%; height:3px; border-radius:3px; background:#abb6b9; }
 .harbor [data-at].unwritten { visibility:hidden; }
 .harbor .typing::after { content:'▍'; color:#ffbe88; }
 @media(max-width:650px){
-    .harbor { height:480px; margin-top:30px; }
-    .harbor-term { left:6%; top:5%; width:83%; max-width:350px; }
-    .harbor-log { min-height:132px; padding:10px 13px; }
-    .harbor-command { margin-bottom:5px; }
+    .harbor { display:flex; flex-direction:column; justify-content:space-between; gap:24px; height:auto; min-height:540px; padding:16px 6% 22px; margin-top:30px; }
+    .harbor-term { position:relative; inset:auto; width:94%; max-width:350px; }
+    .harbor-log { padding:8px 10px 3px; }
+    .harbor-welcome { margin-bottom:5px; }
+    .harbor-input { margin:0 10px 6px; }
     .harbor-term .harbor-port { left:33%; top:100%; }
-    .harbor-phone { top:47%; right:6%; width:48%; max-width:193px; height:44%; border-radius:20px; }
+    .harbor-phone { position:relative; inset:auto; align-self:flex-end; width:59%; max-width:193px; height:252px; border-radius:20px; }
 }
 `;
 
@@ -90,7 +108,7 @@ export const harborJs = `
     const route = scene.querySelector('.harbor-route path');
     const courier = scene.querySelector('.harbor-courier');
     const lines = Array.from(scene.querySelectorAll('[data-at]'), node => ({
-        node, text: node.textContent, start: Number(node.dataset.at), until: Number(node.dataset.until || Infinity)
+        node, text: node.dataset.text || node.textContent, start: Number(node.dataset.at), until: Number(node.dataset.until || Infinity)
     }));
     const motion = matchMedia('(prefers-reduced-motion: reduce)');
     const end = 13;
@@ -111,7 +129,6 @@ export const harborJs = `
     function paint() {
         const speaker = time < 5.4 ? 'terminal' : time < 9.4 ? 'phone' : time < 11.5 ? 'terminal' : '';
         if (scene.parentElement.dataset.speaker !== speaker) scene.parentElement.dataset.speaker = speaker;
-        scene.classList.toggle('awaiting-reply', time < 7.9);
         scene.classList.toggle('answering', time >= 5.4 && time < 7.9);
         lines.forEach(({ node, text, start, until }) => {
             const count = Math.min(text.length, Math.max(0, Math.ceil((time - start) * 23)));
@@ -145,7 +162,9 @@ export const harborJs = `
     }
     motion.addEventListener('change', () => { time = motion.matches ? end : 0; paint(); sync(); });
     document.addEventListener('visibilitychange', sync);
-    new ResizeObserver(layout).observe(scene);
+    const resize = new ResizeObserver(layout);
+    resize.observe(scene);
+    resize.observe(scene.querySelector('.harbor-term'));
     new IntersectionObserver(([entry]) => {
         visible = entry.isIntersecting && entry.intersectionRatio >= .12;
         if (!visible && !motion.matches && time >= end) time = 0;
