@@ -153,7 +153,7 @@ ${cardsHtml}
                             <div><dt>Codex</dt><dd><code>crabigator codex</code></dd></div>
                             <div><dt>OpenCode</dt><dd><code>crabigator opencode</code></dd></div>
                             <div><dt>Grok Build</dt><dd><code>crabigator grok</code></dd></div>
-                            <div id="antigravity"><dt>Antigravity</dt><dd><code>crabigator antigravity</code> or <code>crabigator agy</code></dd></div>
+                            <div id="antigravity"><dt>Antigravity</dt><dd><code>crabigator anti-gravity</code></dd></div>
                         </dl>
                     </li>
                     <li>Open the pairing link on your phone.</li>
