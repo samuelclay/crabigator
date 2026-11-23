@@ -1,6 +1,16 @@
 use anyhow::Result;
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tokio::process::Command;
+
+const REPO_IDENTITY_CACHE_TTL: Duration = Duration::from_secs(60);
+
+fn repo_identity_cache() -> &'static Mutex<HashMap<PathBuf, (Instant, (String, String))>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, (Instant, (String, String))>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 #[derive(Clone, Debug)]
 pub struct FileStatus {
@@ -76,32 +86,45 @@ impl GitState {
             }
         }
 
-        (state.repo_owner, state.repo_name) = Self::repository_identity(dir).await;
+        // Run branch, recent commits, status, and unstaged/staged numstat concurrently.
+        let (repo_id, branch_out, recent_commits, status_out, numstat_out, cached_numstat_out) =
+            tokio::join!(
+                Self::repository_identity(dir),
+                Command::new("git")
+                    .args(["branch", "--show-current"])
+                    .env("GIT_OPTIONAL_LOCKS", "0")
+                    .current_dir(dir)
+                    .output(),
+                Self::recent_commits(dir),
+                Command::new("git")
+                    .args(["status", "--porcelain", "-uall"])
+                    .env("GIT_OPTIONAL_LOCKS", "0")
+                    .current_dir(dir)
+                    .output(),
+                Command::new("git")
+                    .args(["diff", "--numstat"])
+                    .env("GIT_OPTIONAL_LOCKS", "0")
+                    .current_dir(dir)
+                    .output(),
+                Command::new("git")
+                    .args(["diff", "--cached", "--numstat"])
+                    .env("GIT_OPTIONAL_LOCKS", "0")
+                    .current_dir(dir)
+                    .output(),
+            );
 
-        // Get current branch
-        if let Ok(output) = Command::new("git")
-            .args(["branch", "--show-current"])
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .current_dir(dir)
-            .output()
-            .await
-        {
+        (state.repo_owner, state.repo_name) = repo_id;
+        state.recent_commits = recent_commits;
+
+        if let Ok(output) = branch_out {
             if output.status.success() {
                 state.branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
             }
         }
 
-        state.recent_commits = Self::recent_commits(dir).await;
-
         // Get file statuses using porcelain format
         // -uall shows individual files in untracked directories instead of aggregating
-        if let Ok(output) = Command::new("git")
-            .args(["status", "--porcelain", "-uall"])
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .current_dir(dir)
-            .output()
-            .await
-        {
+        if let Ok(output) = status_out {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 for line in stdout.lines() {
@@ -133,7 +156,7 @@ impl GitState {
                 file.file_count = Self::count_files_in_folder(dir, &file.path).await;
             }
         }
-        if std::env::var("CRABIGATOR_PROFILE").is_ok() && folder_start.elapsed().as_millis() > 100 {
+        if profile && folder_start.elapsed().as_millis() > 100 {
             if let Ok(mut f) = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -148,31 +171,24 @@ impl GitState {
             }
         }
 
-        // Get diff --numstat for line counts
-        if let Ok(output) = Command::new("git")
-            .args(["diff", "--numstat"])
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .current_dir(dir)
-            .output()
-            .await
-        {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                Self::parse_numstat(&stdout, &mut state.files);
+        // Apply diff --numstat and --cached --numstat using an O(1) index map.
+        if !state.files.is_empty() {
+            let mut path_index: HashMap<String, usize> =
+                HashMap::with_capacity(state.files.len());
+            for (idx, file) in state.files.iter().enumerate() {
+                path_index.entry(file.path.clone()).or_insert(idx);
             }
-        }
-
-        // Also get staged diff stats
-        if let Ok(output) = Command::new("git")
-            .args(["diff", "--cached", "--numstat"])
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .current_dir(dir)
-            .output()
-            .await
-        {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                Self::parse_numstat(&stdout, &mut state.files);
+            if let Ok(output) = numstat_out {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    Self::parse_numstat_indexed(&stdout, &mut state.files, &path_index);
+                }
+            }
+            if let Ok(output) = cached_numstat_out {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    Self::parse_numstat_indexed(&stdout, &mut state.files, &path_index);
+                }
             }
         }
 
@@ -207,19 +223,22 @@ impl GitState {
         Ok(state)
     }
 
-    fn parse_numstat(numstat: &str, files: &mut [FileStatus]) {
+    fn parse_numstat_indexed(
+        numstat: &str,
+        files: &mut [FileStatus],
+        path_index: &HashMap<String, usize>,
+    ) {
         for line in numstat.lines() {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 3 {
-                let additions = parts[0].parse::<usize>().unwrap_or(0);
-                let deletions = parts[1].parse::<usize>().unwrap_or(0);
-                let path = parts[2];
-
-                // Find matching file and update stats
-                if let Some(file) = files.iter_mut().find(|f| f.path == path) {
-                    file.additions += additions;
-                    file.deletions += deletions;
-                }
+            let mut parts = line.split('\t');
+            let (Some(add_s), Some(del_s), Some(path)) = (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            if let Some(&idx) = path_index.get(path) {
+                let additions = add_s.parse::<usize>().unwrap_or(0);
+                let deletions = del_s.parse::<usize>().unwrap_or(0);
+                files[idx].additions += additions;
+                files[idx].deletions += deletions;
             }
         }
     }
@@ -261,7 +280,15 @@ impl GitState {
     }
 
     async fn repository_identity(base_dir: &Path) -> (String, String) {
-        if let Ok(output) = Command::new("git")
+        if let Ok(cache) = repo_identity_cache().lock() {
+            if let Some((cached_at, identity)) = cache.get(base_dir) {
+                if cached_at.elapsed() < REPO_IDENTITY_CACHE_TTL {
+                    return identity.clone();
+                }
+            }
+        }
+
+        let identity = if let Ok(output) = Command::new("git")
             .args(["remote", "get-url", "origin"])
             .env("GIT_OPTIONAL_LOCKS", "0")
             .current_dir(base_dir)
@@ -270,27 +297,42 @@ impl GitState {
         {
             if output.status.success() {
                 let remote = String::from_utf8_lossy(&output.stdout);
-                if let Some(identity) = parse_remote_identity(remote.trim()) {
-                    return identity;
-                }
+                parse_remote_identity(remote.trim())
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
-        let name = Command::new("git")
-            .args(["rev-parse", "--show-toplevel"])
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .current_dir(base_dir)
-            .output()
-            .await
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| {
-                Path::new(String::from_utf8_lossy(&output.stdout).trim())
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-            })
-            .unwrap_or_default();
-        (String::new(), name)
+        let result = match identity {
+            Some(pair) => pair,
+            None => {
+                let name = Command::new("git")
+                    .args(["rev-parse", "--show-toplevel"])
+                    .env("GIT_OPTIONAL_LOCKS", "0")
+                    .current_dir(base_dir)
+                    .output()
+                    .await
+                    .ok()
+                    .filter(|output| output.status.success())
+                    .and_then(|output| {
+                        Path::new(String::from_utf8_lossy(&output.stdout).trim())
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                    })
+                    .unwrap_or_default();
+                (String::new(), name)
+            }
+        };
+
+        if let Ok(mut cache) = repo_identity_cache().lock() {
+            if cache.len() > 64 {
+                cache.clear();
+            }
+            cache.insert(base_dir.to_path_buf(), (Instant::now(), result.clone()));
+        }
+        result
     }
 
     /// Count lines in a file by reading it directly

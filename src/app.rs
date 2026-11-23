@@ -37,8 +37,8 @@ use crate::terminal::{
 };
 use crate::ui::cooldown::{self, Cooldowns};
 use crate::ui::{
-    compute_dynamic_status_rows, draw_flow_column, draw_status_bar, flow_column_rect, handoff_rows,
-    split_terminal_rows, throbber_frame_index, Layout, PairingState,
+    compute_dynamic_status_rows, flow_column_rect, handoff_rows, split_terminal_rows,
+    throbber_frame_index, Layout, PairingState, StatusBarRenderer,
 };
 use crate::update::{UpdateCheckResult, UpdateState};
 
@@ -189,22 +189,32 @@ fn spawn_git_refresh(
         let git_state_tmp = GitState::new();
         let diff_summary_tmp = DiffSummary::new();
 
-        let git_start = Instant::now();
-        let git_result = git_state_tmp.refresh_in_dir(&cwd).await;
-        let git_time_ms = if capture_timing {
-            git_start.elapsed().as_millis() as u64
-        } else {
-            0
-        };
+        // Run git status and diff parsing concurrently instead of sequentially.
+        let (git_pair, diff_pair) = tokio::join!(
+            async {
+                let start = Instant::now();
+                let res = git_state_tmp.refresh_in_dir(&cwd).await;
+                let ms = if capture_timing {
+                    start.elapsed().as_millis() as u64
+                } else {
+                    0
+                };
+                (res, ms)
+            },
+            async {
+                let start = Instant::now();
+                let res = diff_summary_tmp.refresh_in_dir(&cwd).await;
+                let ms = if capture_timing {
+                    start.elapsed().as_millis() as u64
+                } else {
+                    0
+                };
+                (res, ms)
+            }
+        );
 
-        let diff_start = Instant::now();
-        let diff_result = diff_summary_tmp.refresh_in_dir(&cwd).await;
-        let diff_time_ms = if capture_timing {
-            diff_start.elapsed().as_millis() as u64
-        } else {
-            0
-        };
-
+        let (git_result, git_time_ms) = git_pair;
+        let (diff_result, diff_time_ms) = diff_pair;
         let git_state = git_result.unwrap_or_default();
         let diff_summary = diff_result.unwrap_or_default();
         let _ = tx
@@ -344,6 +354,20 @@ pub struct App {
     suggestion_tracker: crate::parsers::SuggestionTracker,
     /// Hash of last status bar state (to avoid flickering redraws)
     last_status_bar_hash: Option<u64>,
+    /// Stateful differential status bar renderer + per-module row caches.
+    status_bar_renderer: StatusBarRenderer,
+    /// Monotonic versions bumped only when git_state / diff_summary content changes.
+    git_version: u64,
+    diff_version: u64,
+    last_git_content_hash: Option<u64>,
+    last_diff_content_hash: Option<u64>,
+    /// Memoized dynamic layout inputs so no-op 50ms ticks skip layout recomputation.
+    last_layout_input_hash: Option<u64>,
+    last_handoff_rows: u16,
+    /// Tracks PTY output chunks so CWD screen scanning skips idle ticks.
+    pty_output_seq: u64,
+    last_cwd_scan_pty_seq: u64,
+    last_cwd_platform_dir: Option<PathBuf>,
     /// Fading tints for the state indicator and PR status cells that changed
     /// recently, matching the PR board's cooldown.
     cooldowns: Cooldowns,
@@ -541,6 +565,16 @@ impl App {
             last_cloud_screen_hash: None,
             suggestion_tracker: crate::parsers::SuggestionTracker::new(),
             last_status_bar_hash: None,
+            status_bar_renderer: StatusBarRenderer::new(),
+            git_version: 0,
+            diff_version: 0,
+            last_git_content_hash: None,
+            last_diff_content_hash: None,
+            last_layout_input_hash: None,
+            last_handoff_rows: initial_handoff_rows,
+            pty_output_seq: 0,
+            last_cwd_scan_pty_seq: u64::MAX,
+            last_cwd_platform_dir: None,
             cooldowns: Cooldowns::default(),
             session_mark,
             flow,
@@ -837,7 +871,6 @@ impl App {
         let mut git_interval = interval(GIT_INTERVAL_ACTIVE);
         let mut hook_interval = interval(HOOK_INTERVAL_ACTIVE);
         let mut throbber_interval_timer = interval(Duration::from_millis(100));
-        let mut full_refresh_interval = interval(Duration::from_secs(5));
         let mut cloud_reconnect_interval = interval(Duration::from_secs(2));
         let mut status_draw_interval = interval(STATUS_DRAW_INTERVAL_ACTIVE);
 
@@ -1021,6 +1054,16 @@ impl App {
                     }
                     self.git_state = result.git_state;
                     self.diff_summary = result.diff_summary;
+                    let git_hash = self.compute_git_hash();
+                    if self.last_git_content_hash != Some(git_hash) {
+                        self.last_git_content_hash = Some(git_hash);
+                        self.git_version = self.git_version.wrapping_add(1);
+                    }
+                    let diff_hash = self.compute_changes_hash();
+                    if self.last_diff_content_hash != Some(diff_hash) {
+                        self.last_diff_content_hash = Some(diff_hash);
+                        self.diff_version = self.diff_version.wrapping_add(1);
+                    }
                     git_refresh_pending = false;
                     if self.initial_git_time_ms.is_none() {
                         crate::cli::profile_mark("run: first git refresh result applied");
@@ -1149,18 +1192,6 @@ impl App {
                         self.draw_status_bar()?;
                         last_status_draw = Instant::now();
                         last_throbber_draw = Instant::now();
-                    }
-                }
-
-                // Full refresh timer - prevent visual artifact buildup
-                // Note: No clear_status_area() call here - draw_status_bar() handles
-                // clearing internally within its sync block to prevent flickering
-                _ = full_refresh_interval.tick() => {
-                    // Force redraw by clearing the hash
-                    self.last_status_bar_hash = None;
-                    if self.can_draw_status(last_pty_output) {
-                        self.draw_status_bar()?;
-                        last_status_draw = Instant::now();
                     }
                 }
 
@@ -1498,12 +1529,14 @@ impl App {
                     let scroll_region_result = self.scroll_region_filter.scan(&passthrough);
                     if scroll_region_result.needs_redraw {
                         self.last_status_bar_hash = None;
+                        self.status_bar_renderer.invalidate();
                     }
                     let terminal_output = scroll_region_result.output;
                     if terminal_output.is_empty() {
                         continue;
                     }
                     wrote_output = true;
+                    self.pty_output_seq = self.pty_output_seq.wrapping_add(1);
 
                     // History and the live screen must see the same filtered
                     // stream as the host, including alternate-screen handling.
@@ -1537,10 +1570,61 @@ impl App {
         Ok(())
     }
 
+    /// Lightweight hash of every input that can change `handoff_rows` or
+    /// `compute_dynamic_status_rows`. Skipping layout recomputation when this
+    /// matches avoids recap word-wrapping and natural-row scans on 50ms ticks.
+    fn compute_layout_input_hash(&self, recap_toast_visible: bool) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.total_rows.hash(&mut hasher);
+        self.total_cols.hash(&mut hasher);
+        self.git_version.hash(&mut hasher);
+        self.diff_version.hash(&mut hasher);
+        self.display_title.hash(&mut hasher);
+        self.pr_tracker.slack_threads().len().hash(&mut hasher);
+        for t in self.pr_tracker.slack_threads() {
+            t.text.is_some().hash(&mut hasher);
+        }
+        self.pairing_state.banner_rows().hash(&mut hasher);
+        self.pairing_state.banner_rows_compact().hash(&mut hasher);
+        self.update_state.banner_rows().hash(&mut hasher);
+        self.recap_manager.state_hash().hash(&mut hasher);
+        recap_toast_visible.hash(&mut hasher);
+        self.flow.has_frame().hash(&mut hasher);
+        // Only the idle > 60s threshold can add an 8th stats row.
+        let effective = self.session_stats.effective_state();
+        std::mem::discriminant(&effective).hash(&mut hasher);
+        if matches!(
+            effective,
+            SessionState::Complete | SessionState::Question | SessionState::Interrupted
+        ) {
+            if let Some(since) = self.session_stats.platform_stats.idle_since {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64();
+                ((now - since) >= 60.0).hash(&mut hasher);
+            }
+        }
+        let prs = self.pr_tracker.prs();
+        prs.len().hash(&mut hasher);
+        for pr in prs {
+            pr.dismissed.hash(&mut hasher);
+            pr.primary.hash(&mut hasher);
+            pr.number.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
     /// Resize the widget area to fit the tallest widget's natural content,
     /// capped at the historical 20% ceiling. Called before each status redraw
     /// so the assistant CLI reclaims space when widgets are short.
     fn maybe_apply_dynamic_layout(&mut self, recap_toast_visible: bool) -> Result<u16> {
+        let layout_input_hash = self.compute_layout_input_hash(recap_toast_visible);
+        if self.last_layout_input_hash == Some(layout_input_hash) {
+            return Ok(self.last_handoff_rows);
+        }
+
         let handoff = handoff_rows(
             self.total_cols,
             &self.pairing_state,
@@ -1569,6 +1653,9 @@ impl App {
             .saturating_sub(desired_status_rows + handoff)
             .max(1);
 
+        self.last_layout_input_hash = Some(layout_input_hash);
+        self.last_handoff_rows = handoff;
+
         if desired_status_rows == self.status_rows && new_pty_rows == self.pty_rows {
             return Ok(handoff);
         }
@@ -1585,6 +1672,7 @@ impl App {
         self.platform_pty.resize(self.total_cols, self.pty_rows)?;
         self.capture_manager.resize(self.total_cols, self.pty_rows);
         self.last_status_bar_hash = None;
+        self.status_bar_renderer.invalidate();
 
         Ok(handoff)
     }
@@ -1675,15 +1763,13 @@ impl App {
                 .tools
                 .len()
                 .hash(&mut hasher);
+            self.session_stats.platform_stats.context.hash(&mut hasher);
 
-            // Git state
-            self.git_state.branch.hash(&mut hasher);
-            self.git_state.files.len().hash(&mut hasher);
+            // Git state & Diff summary (version covers content changes, not just file counts)
+            self.git_version.hash(&mut hasher);
             self.git_state.loading.hash(&mut hasher);
             self.cwd.hash(&mut hasher);
-
-            // Diff summary
-            self.diff_summary.files.len().hash(&mut hasher);
+            self.diff_version.hash(&mut hasher);
             self.diff_summary.loading.hash(&mut hasher);
 
             // Automatic title plus the PR fields that choose the official title.
@@ -1763,22 +1849,26 @@ impl App {
             handoff_rows,
         };
 
-        let mut stdout = stdout();
+        let mut stdout = stdout().lock();
 
-        // Get cursor position from vt100 parser to restore after drawing
-        // This is critical: we must restore cursor to the position the parser knows,
-        // so that DSR responses match what Claude expects
-        let cursor_position = Some(self.platform_pty.screen().cursor_position());
+        // Get cursor position and text attributes from vt100 parser to restore
+        // atomically inside SYNC_BEGIN..SYNC_END.
+        let screen = self.platform_pty.screen();
+        let cursor_position = Some(screen.cursor_position());
+        let child_attrs = screen.attributes_formatted();
 
         // Get cloud status if connected
         let cloud_status = self.cloud_client.as_ref().map(|c| c.status());
         let pr_scope = self.pr_action_scope();
-        draw_status_bar(
+        let flow_exact_width = self.flow.frame_exact_width() == rect.map(|r| r.width);
+        self.status_bar_renderer.draw(
             &mut stdout,
             &layout,
             &self.session_stats,
             &self.git_state,
+            self.git_version,
             &self.diff_summary,
+            self.diff_version,
             self.display_title.as_deref(),
             self.pr_tracker.slack_threads(),
             self.ide,
@@ -1791,15 +1881,16 @@ impl App {
             self.pr_tracker.prs(),
             &pr_scope,
             cursor_position,
+            &child_attrs,
             &self.cooldowns,
             now_ms,
             self.session_mark,
             self.attach_clients > 0,
             self.flow.view(),
+            self.flow.frame_cells(),
+            flow_exact_width,
         )?;
-        // Our colour resets end the assistant's text style: put it back.
-        let _ = stdout.write_all(&self.platform_pty.screen().attributes_formatted());
-        let _ = stdout.flush();
+        drop(stdout);
 
         // The transcript path arrives with the first hook/session event, so keep
         // the mirror's copy current for anyone tracing this session back to its log.
@@ -1868,6 +1959,7 @@ impl App {
                 .repaint(self.platform_pty.screen()),
         )?;
         self.last_status_bar_hash = None;
+        self.status_bar_renderer.invalidate();
         self.draw_status_bar()?;
         // Widget drawing moves the cursor. Restore pending wrap as well as
         // position so the child's next character still lands in the right row.
@@ -1880,17 +1972,28 @@ impl App {
     /// Repaint just the flow column with its latest frame, between full
     /// status-bar draws. Errors are ignored: the scene is decoration.
     fn draw_flow_column(&mut self) {
-        let (Some(rect), Some(rows)) = (self.flow.drawn_rect(), self.flow.frame_rows()) else {
+        let Some(rect) = self.flow.drawn_rect() else {
             return;
         };
         let screen = self.platform_pty.screen();
-        let _ = draw_flow_column(
-            &mut stdout(),
-            rect,
-            rows,
-            Some(screen.cursor_position()),
-            &screen.attributes_formatted(),
-        );
+        let cursor = Some(screen.cursor_position());
+        let attrs = screen.attributes_formatted();
+        let mut out = stdout().lock();
+        if let Some(cells) = self.flow.frame_cells() {
+            if cells.columns == rect.width as usize && cells.rows == rect.rows as usize {
+                let _ = self
+                    .status_bar_renderer
+                    .draw_flow_cells_only(&mut out, rect, cells, cursor, &attrs);
+                return;
+            }
+        }
+        let Some(rows) = self.flow.frame_rows() else {
+            return;
+        };
+        let exact_width = self.flow.frame_exact_width() == Some(rect.width);
+        let _ = self
+            .status_bar_renderer
+            .draw_flow_only(&mut out, rect, rows, exact_width, cursor, &attrs);
     }
 
     /// Handle PTY output capture and cloud streaming
@@ -2091,7 +2194,15 @@ impl App {
         if !force && self.last_cwd_detection.elapsed() < CWD_DETECTION_INTERVAL {
             return false;
         }
+        let platform_dir = &self.session_stats.platform_stats.working_directory;
+        if self.pty_output_seq == self.last_cwd_scan_pty_seq
+            && *platform_dir == self.last_cwd_platform_dir
+        {
+            return false;
+        }
         self.last_cwd_detection = Instant::now();
+        self.last_cwd_scan_pty_seq = self.pty_output_seq;
+        self.last_cwd_platform_dir = platform_dir.clone();
 
         // Claude's live status line can move before its next hook runs.
         // The resume hook supplies a directory while that line is absent.
@@ -2135,6 +2246,11 @@ impl App {
         self.cwd = next_cwd;
         self.git_state = GitState::new();
         self.diff_summary = DiffSummary::new();
+        self.git_version = self.git_version.wrapping_add(1);
+        self.diff_version = self.diff_version.wrapping_add(1);
+        self.last_git_content_hash = None;
+        self.last_diff_content_hash = None;
+        self.last_layout_input_hash = None;
         self.mirror_publisher
             .set_cwd(self.cwd.to_string_lossy().to_string());
         // New worktree/branch — surface its existing PR right away.
@@ -2535,6 +2651,7 @@ impl App {
         // Force redraw with new dimensions (draw_status_bar clears internally
         // within its sync block to prevent flickering)
         self.last_status_bar_hash = None;
+        self.status_bar_renderer.invalidate();
         self.draw_status_bar()?;
 
         Ok(())
@@ -2887,10 +3004,10 @@ impl App {
         use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
 
-        // Use by_language() for deterministic ordering
-        let by_lang = self.diff_summary.by_language();
+        // Use cached by_language_slice() for deterministic ordering
+        let by_lang = self.diff_summary.by_language_slice();
         by_lang.len().hash(&mut hasher);
-        for lang in &by_lang {
+        for lang in by_lang {
             lang.language.hash(&mut hasher);
             lang.changes.len().hash(&mut hasher);
             for c in &lang.changes {

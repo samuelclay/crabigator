@@ -213,6 +213,8 @@ impl Config {
         fs::rename(&tmp_path, &path)
             .with_context(|| format!("Failed to rename config file to {}", path.display()))?;
 
+        crate::cloud::CloudEndpoints::invalidate_cache();
+
         Ok(())
     }
 

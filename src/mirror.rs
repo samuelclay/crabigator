@@ -470,11 +470,10 @@ impl MirrorPublisher {
             f.deletions.hash(&mut hasher);
         }
 
-        // Hash key fields from diff using by_language() for deterministic ordering
-        // (diff parsers use HashMap with non-deterministic iteration order)
-        let by_lang = diff.by_language();
+        // Hash key fields from diff using cached by_language_slice() for deterministic ordering
+        let by_lang = diff.by_language_slice();
         by_lang.len().hash(&mut hasher);
-        for lang in &by_lang {
+        for lang in by_lang {
             lang.language.hash(&mut hasher);
             lang.changes.len().hash(&mut hasher);
             for c in &lang.changes {
@@ -622,7 +621,7 @@ impl MirrorPublisher {
                 changes: WidgetMirror {
                     data: ChangesMirrorData {
                         by_language: diff
-                            .by_language()
+                            .by_language_slice()
                             .iter()
                             .map(|lc| LanguageChangesMirror {
                                 language: lc.language.clone(),
@@ -736,10 +735,10 @@ fn render_git_preview(git: &GitState) -> Vec<String> {
 }
 
 fn render_changes_preview(diff: &DiffSummary) -> Vec<String> {
-    let by_language = diff.by_language();
+    let by_language = diff.by_language_slice();
     let mut lines = Vec::new();
 
-    for lc in &by_language {
+    for lc in by_language {
         let count = lc.changes.len();
         let label = if count == 1 { "change" } else { "changes" };
         lines.push(format!("{} - {} {}", lc.language, count, label));

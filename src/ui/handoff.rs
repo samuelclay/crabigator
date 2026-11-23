@@ -583,12 +583,15 @@ fn format_recap_meta(generated_at_ms: u64, delta: Option<String>) -> Option<Stri
 }
 
 fn fill_row(stdout: &mut dyn Write, row: u16, width: u16) -> Result<()> {
-    write!(stdout, "{}", escape::cursor_to(row, 1))?;
-    write!(stdout, "{}", bg(color::BG_DARK))?;
-    for _ in 0..width {
-        write!(stdout, " ")?;
-    }
-    write!(stdout, "{}", RESET)?;
+    write!(
+        stdout,
+        "{}{}{:width$}{}",
+        escape::cursor_to(row, 1),
+        bg(color::BG_DARK),
+        "",
+        RESET,
+        width = width as usize
+    )?;
     Ok(())
 }
 

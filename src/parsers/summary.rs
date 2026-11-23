@@ -3,10 +3,20 @@
 use anyhow::Result;
 use regex::Regex;
 use std::path::Path;
+use std::sync::OnceLock;
 use tokio::process::Command;
 
 use super::types::{ChangeNode, ChangeType, FileChanges, LanguageChanges, NodeKind};
 use super::{GenericParser, ObjCParser, PythonParser, RustParser, SwiftParser, TypeScriptParser};
+
+static DIFF_PARSERS: &[&'static dyn DiffParser] = &[
+    &RustParser,
+    &TypeScriptParser,
+    &PythonParser,
+    &SwiftParser,
+    &ObjCParser,
+    &GenericParser,
+];
 
 /// Trait for language-specific diff parsers
 pub trait DiffParser: Send + Sync {
@@ -30,11 +40,31 @@ pub trait DiffParser: Send + Sync {
 pub struct DiffSummary {
     pub files: Vec<FileChanges>,
     pub loading: bool,
+    by_language_cache: OnceLock<Vec<LanguageChanges>>,
 }
 
 impl DiffSummary {
+    /// Construct a loaded `DiffSummary` from parsed file changes.
+    pub fn from_files(files: Vec<FileChanges>) -> Self {
+        Self {
+            files,
+            loading: false,
+            by_language_cache: OnceLock::new(),
+        }
+    }
+
+    /// Borrow changes grouped by language (computed once and cached on `self`).
+    pub fn by_language_slice(&self) -> &[LanguageChanges] {
+        self.by_language_cache
+            .get_or_init(|| self.compute_by_language())
+    }
+
     /// Get changes grouped by language for display
     pub fn by_language(&self) -> Vec<LanguageChanges> {
+        self.by_language_slice().to_vec()
+    }
+
+    fn compute_by_language(&self) -> Vec<LanguageChanges> {
         use std::collections::HashMap;
 
         // Merge changes by (language, kind, name, scope, file_path) to combine
@@ -171,50 +201,43 @@ impl DiffSummary {
         let start = std::time::Instant::now();
         let mut summary = DiffSummary::default();
 
-        // Get the diff output
-        let output = Command::new("git")
-            .args(["diff", "--no-color"])
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .current_dir(dir)
-            .output()
-            .await?;
+        // Fetch unstaged and staged diffs concurrently.
+        let (output, staged_output) = tokio::join!(
+            Command::new("git")
+                .args(["diff", "--no-color"])
+                .env("GIT_OPTIONAL_LOCKS", "0")
+                .current_dir(dir)
+                .output(),
+            Command::new("git")
+                .args(["diff", "--cached", "--no-color"])
+                .env("GIT_OPTIONAL_LOCKS", "0")
+                .current_dir(dir)
+                .output()
+        );
+        let output = output?;
 
         if !output.status.success() {
             return Ok(summary);
         }
 
         let diff_output = String::from_utf8_lossy(&output.stdout);
-
-        // Also get staged changes
-        let staged_output = Command::new("git")
-            .args(["diff", "--cached", "--no-color"])
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .current_dir(dir)
-            .output()
-            .await?;
-
+        let staged_output = staged_output?;
         let staged_diff = String::from_utf8_lossy(&staged_output.stdout);
-        let combined_diff = format!("{}\n{}", diff_output, staged_diff);
+        let mut combined_diff = String::with_capacity(diff_output.len() + staged_diff.len() + 1);
+        combined_diff.push_str(&diff_output);
+        combined_diff.push('\n');
+        combined_diff.push_str(&staged_diff);
 
         // Parse the diff into file chunks
         let file_diffs = parse_diff_into_files(&combined_diff);
 
-        // Create parsers
-        let parsers: Vec<Box<dyn DiffParser>> = vec![
-            Box::new(RustParser),
-            Box::new(TypeScriptParser),
-            Box::new(PythonParser),
-            Box::new(SwiftParser),
-            Box::new(ObjCParser),
-            Box::new(GenericParser),
-        ];
-
         for (filename, file_diff) in file_diffs {
             // Find the appropriate parser
-            let parser = parsers
+            let parser = DIFF_PARSERS
                 .iter()
+                .copied()
                 .find(|p| p.supports(&filename))
-                .unwrap_or(&parsers[parsers.len() - 1]); // fallback to generic
+                .unwrap_or(DIFF_PARSERS[DIFF_PARSERS.len() - 1]); // fallback to generic
 
             let language = parser.language().to_string();
 
@@ -222,7 +245,7 @@ impl DiffSummary {
             let mut changes = parser.parse(&file_diff, &filename);
 
             // Also parse hunk headers for modifications to existing functions
-            let modified = parse_hunk_modifications(&file_diff, parser.as_ref(), &filename);
+            let modified = parse_hunk_modifications(&file_diff, parser, &filename);
 
             // Add modified functions that aren't already in changes. Compare
             // by name only: the same symbol may carry scope when found in the
@@ -370,16 +393,20 @@ fn parse_diff_into_files(diff: &str) -> Vec<(String, String)> {
         if line.starts_with("diff --git") {
             // Save previous file if any
             if !current_file.is_empty() {
-                files.push((current_file.clone(), current_diff.clone()));
+                files.push((
+                    std::mem::take(&mut current_file),
+                    std::mem::take(&mut current_diff),
+                ));
+            } else {
+                current_diff.clear();
             }
 
             // Extract filename from "diff --git a/path b/path"
             if let Some(b_path) = line.split(" b/").nth(1) {
                 current_file = b_path.to_string();
             } else {
-                current_file = String::new();
+                current_file.clear();
             }
-            current_diff = String::new();
         } else {
             current_diff.push_str(line);
             current_diff.push('\n');

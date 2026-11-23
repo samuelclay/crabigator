@@ -2,12 +2,15 @@
 //!
 //! Coordinates the layout and rendering of all status bar widgets.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::Path;
 
 use anyhow::Result;
 
 use crate::cloud::CloudStatus;
+use crate::flow::Cells;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::ide::IdeKind;
@@ -21,15 +24,19 @@ use crate::title::session_title_hierarchy;
 use crate::update::UpdateState;
 
 use super::cooldown::{self, Cooldowns};
-use super::flow::{draw_flow_label, draw_flow_row, FlowRect, FlowView};
+use super::flow::{
+    draw_flow_cells_diff, draw_flow_column_diff, draw_flow_label, format_flow_row_text,
+    write_flow_cells_diff, FlowRect, FlowView,
+};
 use super::{
-    changes_natural_rows, draw_changes_widget, draw_git_widget, draw_pairing_banner,
-    draw_pr_handoff, draw_pr_separator, draw_recap_handoff, draw_stats_widget, draw_update_banner,
-    git_natural_rows, pr_handoff_rows, pr_separator_rows, recap_handoff_rows, stats_render_rows,
-    stats_use_compact_layout, total_handoff_rows, PairingState, WidgetArea, MAX_RECAP_ROWS,
+    changes_natural_rows, draw_pairing_banner, draw_pr_handoff, draw_pr_separator,
+    draw_recap_handoff, draw_update_banner, git_natural_rows, pr_handoff_rows, pr_separator_rows,
+    recap_handoff_rows, render_changes_rows, render_git_rows, render_stats_rows, stats_render_rows,
+    stats_use_compact_layout, total_handoff_rows, PairingState, MAX_RECAP_ROWS,
 };
 
 /// Layout information needed for rendering widgets
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
     pub pty_rows: u16,
     pub total_cols: u16,
@@ -283,6 +290,691 @@ pub fn compute_dynamic_status_rows(
     desired.clamp(MIN_STATUS_ROWS.min(preferred_max), preferred_max)
 }
 
+/// Render the handoff strip (update banner, recap/pairing, PR separator & PRs)
+/// into `out`.
+#[allow(clippy::too_many_arguments)]
+fn render_handoff_into(
+    out: &mut Vec<u8>,
+    layout: &Layout,
+    pairing_state: &PairingState,
+    update_state: &UpdateState,
+    recap_state: &RecapState,
+    recap_toast_visible: bool,
+    prs: &[SessionPr],
+    pr_scope: &str,
+    cooldowns: &Cooldowns,
+    now_ms: u64,
+) -> Result<()> {
+    if layout.handoff_rows == 0 {
+        return Ok(());
+    }
+
+    let update_banner_rows = update_state.banner_rows();
+    let pairing_compact = update_banner_rows > 0;
+    let pairing_banner_rows = if pairing_compact {
+        pairing_state.banner_rows_compact()
+    } else {
+        pairing_state.banner_rows()
+    };
+
+    let mut current_banner_row = layout.pty_rows + 1;
+    if update_banner_rows > 0 {
+        draw_update_banner(out, current_banner_row, layout.total_cols, update_state)?;
+        current_banner_row += update_banner_rows;
+    }
+
+    let banner_rows_reserved = layout
+        .handoff_rows
+        .saturating_sub(pr_separator_rows(prs))
+        .saturating_sub(pr_handoff_rows(prs));
+    let handoff_limit = layout.pty_rows + banner_rows_reserved;
+    let remaining_rows = banner_rows_reserved.saturating_sub(update_banner_rows);
+    let recap_rows = draw_recap_handoff(
+        out,
+        current_banner_row,
+        layout.total_cols,
+        recap_state,
+        remaining_rows,
+        recap_toast_visible,
+    )?;
+    current_banner_row += recap_rows;
+
+    if recap_rows == 0 && pairing_banner_rows > 0 {
+        let end_row = current_banner_row
+            .saturating_add(pairing_banner_rows)
+            .saturating_sub(1);
+        if end_row <= handoff_limit {
+            draw_pairing_banner(
+                out,
+                current_banner_row,
+                layout.total_cols,
+                pairing_state,
+                pairing_compact,
+            )?;
+        }
+    }
+
+    let pr_rows = pr_handoff_rows(prs);
+    if pr_rows > 0 {
+        let divider_row = layout.pty_rows + 1 + banner_rows_reserved;
+        draw_pr_separator(out, divider_row, layout.total_cols)?;
+        let pr_start = divider_row + pr_separator_rows(prs);
+        draw_pr_handoff(
+            out,
+            pr_start,
+            layout.total_cols,
+            prs,
+            pr_scope,
+            pr_rows,
+            cooldowns,
+            now_ms,
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Render the thick separator bar and optional flow scene label into `out`.
+fn render_separator_into(out: &mut Vec<u8>, layout: &Layout, flow: Option<FlowView>) -> Result<()> {
+    let separator_row = layout.pty_rows + 1 + layout.handoff_rows;
+    write!(
+        out,
+        "\x1b[{};1H{}{}{}{}",
+        separator_row,
+        escape::bg(color::BG_DARK),
+        escape::fg(color::DARK_GRAY),
+        "━".repeat(layout.total_cols as usize),
+        RESET
+    )?;
+    if let (Some(view), Some(width)) = (
+        flow,
+        flow_column_width(layout.total_cols, layout.status_rows),
+    ) {
+        draw_flow_label(out, separator_row, layout.total_cols, width, view)?;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GitCacheKey {
+    version: u64,
+    width: u16,
+    height: u16,
+    ide: IdeKind,
+    cwd: std::path::PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ChangesCacheKey {
+    version: u64,
+    width: u16,
+    height: u16,
+    titles_hash: u64,
+    slack_hash: u64,
+    ide: IdeKind,
+    cwd: std::path::PathBuf,
+    session_mark: SessionMark,
+}
+
+/// Stateful status bar renderer that caches per-module rows and emits
+/// differential updates (only changed rows/modules) in a single buffered write.
+///
+/// Full `CLEAR_TO_END` repaints happen only on initial draw, layout/width
+/// changes, or after `invalidate()` (resize, scroll-region reset, focus regain).
+pub struct StatusBarRenderer {
+    buf: Vec<u8>,
+    needs_full_clear: bool,
+    last_layout: Option<Layout>,
+    last_widths: Option<ColumnWidths>,
+    last_handoff_key: Option<u64>,
+    last_handoff_bytes: Vec<u8>,
+    last_separator_bytes: Vec<u8>,
+    last_stats_rows: Vec<String>,
+    last_git_rows: Vec<String>,
+    last_changes_rows: Vec<String>,
+    last_flow_rows: Vec<String>,
+    last_flow_cells: Option<(FlowRect, Cells)>,
+    git_cache: Option<(GitCacheKey, Vec<String>)>,
+    changes_cache: Option<(ChangesCacheKey, Vec<String>)>,
+}
+
+impl Default for StatusBarRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StatusBarRenderer {
+    pub fn new() -> Self {
+        Self {
+            buf: Vec::with_capacity(16 * 1024),
+            needs_full_clear: true,
+            last_layout: None,
+            last_widths: None,
+            last_handoff_key: None,
+            last_handoff_bytes: Vec::new(),
+            last_separator_bytes: Vec::new(),
+            last_stats_rows: Vec::new(),
+            last_git_rows: Vec::new(),
+            last_changes_rows: Vec::new(),
+            last_flow_rows: Vec::new(),
+            last_flow_cells: None,
+            git_cache: None,
+            changes_cache: None,
+        }
+    }
+
+    /// Force a full `CLEAR_TO_END` repaint on the next draw (resize, scroll
+    /// region reset, layout height change, or focus regain).
+    pub fn invalidate(&mut self) {
+        self.needs_full_clear = true;
+        self.last_flow_cells = None;
+    }
+
+    /// Repaint only changed cells of a scene's `Cells` grid directly into the
+    /// terminal buffer (cell-run diffing with CUF + combined truecolor SGR).
+    pub(crate) fn draw_flow_cells_only(
+        &mut self,
+        stdout: &mut dyn Write,
+        rect: FlowRect,
+        cells: &Cells,
+        cursor_position: Option<(u16, u16)>,
+        child_attrs: &[u8],
+    ) -> Result<()> {
+        draw_flow_cells_diff(
+            stdout,
+            &mut self.buf,
+            rect,
+            cells,
+            &mut self.last_flow_cells,
+            cursor_position,
+            child_attrs,
+        )
+    }
+
+    /// Repaint only changed rows of the flow column (used when picker is open).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_flow_only(
+        &mut self,
+        stdout: &mut dyn Write,
+        rect: FlowRect,
+        rows: &[String],
+        exact_width: bool,
+        cursor_position: Option<(u16, u16)>,
+        child_attrs: &[u8],
+    ) -> Result<()> {
+        self.last_flow_cells = None;
+        draw_flow_column_diff(
+            stdout,
+            &mut self.buf,
+            rect,
+            rows,
+            exact_width,
+            &mut self.last_flow_rows,
+            cursor_position,
+            child_attrs,
+        )
+    }
+
+    /// Draw the status bar, performing either a full clear+repaint (when layout
+    /// or column widths changed, or after `invalidate()`) or an incremental
+    /// patch emitting only the changed modules/rows.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw(
+        &mut self,
+        stdout: &mut dyn Write,
+        layout: &Layout,
+        session_stats: &SessionStats,
+        git_state: &GitState,
+        git_version: u64,
+        diff_summary: &DiffSummary,
+        diff_version: u64,
+        terminal_title: Option<&str>,
+        slack_threads: &[SlackThread],
+        ide: IdeKind,
+        cwd: &Path,
+        cloud_status: Option<&CloudStatus>,
+        pairing_state: &PairingState,
+        update_state: &UpdateState,
+        recap_state: &RecapState,
+        recap_toast_visible: bool,
+        prs: &[SessionPr],
+        pr_scope: &str,
+        cursor_position: Option<(u16, u16)>,
+        child_attrs: &[u8],
+        cooldowns: &Cooldowns,
+        now_ms: u64,
+        session_mark: SessionMark,
+        secondary_attached: bool,
+        flow: Option<FlowView>,
+        flow_cells: Option<&Cells>,
+        flow_exact_width: bool,
+    ) -> Result<()> {
+        let is_paired = pairing_state.has_linked_devices;
+        let widget_status_rows = layout.status_rows.max(1);
+        let widget_data_rows = widget_status_rows.saturating_sub(1);
+
+        let compact = stats_use_compact_layout(widget_data_rows);
+        let git_available_rows = widget_status_rows.saturating_sub(2) as usize;
+        let git_needs_multi_column = git_state.files.len() > git_available_rows;
+        let widths = column_widths(
+            layout.total_cols,
+            layout.status_rows,
+            compact,
+            git_needs_multi_column,
+            matches!(flow, Some(FlowView::Scene { .. })),
+        );
+
+        let full_clear = self.needs_full_clear
+            || self.last_layout != Some(*layout)
+            || self.last_widths != Some(widths);
+
+        // Handoff strip (memoized when inputs didn't change).
+        let handoff_key = compute_handoff_key(
+            layout,
+            pairing_state,
+            update_state,
+            recap_state,
+            recap_toast_visible,
+            prs,
+            pr_scope,
+            cooldowns,
+            now_ms,
+        );
+        let handoff_changed = full_clear || self.last_handoff_key != Some(handoff_key);
+        if handoff_changed {
+            self.last_handoff_bytes.clear();
+            render_handoff_into(
+                &mut self.last_handoff_bytes,
+                layout,
+                pairing_state,
+                update_state,
+                recap_state,
+                recap_toast_visible,
+                prs,
+                pr_scope,
+                cooldowns,
+                now_ms,
+            )?;
+            self.last_handoff_key = Some(handoff_key);
+        }
+
+        // Separator bar + flow label.
+        let mut new_separator = Vec::with_capacity(layout.total_cols as usize * 3 + 64);
+        render_separator_into(&mut new_separator, layout, flow)?;
+        let separator_changed = full_clear || new_separator != self.last_separator_bytes;
+
+        // Stats rows (cheap; diffed per row so throbber ticks patch row 1 only).
+        let state_tint = cooldowns.tint(cooldown::SESSION_STATE_KEY, now_ms);
+        let new_stats = render_stats_rows(
+            widths.stats,
+            widget_status_rows,
+            session_stats,
+            cloud_status,
+            is_paired,
+            pairing_state.pairing_code.as_deref(),
+            state_tint,
+            session_mark,
+            secondary_attached,
+        );
+
+        // Git rows (memoized by git_version + geometry + ide + cwd).
+        let git_key = GitCacheKey {
+            version: git_version,
+            width: widths.git,
+            height: widget_status_rows,
+            ide,
+            cwd: cwd.to_path_buf(),
+        };
+        let git_rebuilt = self
+            .git_cache
+            .as_ref()
+            .is_none_or(|(key, _)| *key != git_key);
+        if git_rebuilt {
+            let rows = render_git_rows(widths.git, widget_status_rows, git_state, ide, cwd);
+            self.git_cache = Some((git_key, rows));
+        }
+
+        // Changes rows (memoized by diff_version + geometry + titles + slack + ide + cwd + mark).
+        let titles = session_title_hierarchy(prs, terminal_title);
+        let changes_key = ChangesCacheKey {
+            version: diff_version,
+            width: widths.changes,
+            height: widget_status_rows,
+            titles_hash: hash_titles(titles),
+            slack_hash: hash_slack(slack_threads),
+            ide,
+            cwd: cwd.to_path_buf(),
+            session_mark,
+        };
+        let changes_rebuilt = self
+            .changes_cache
+            .as_ref()
+            .is_none_or(|(key, _)| *key != changes_key);
+        if changes_rebuilt {
+            let rows = render_changes_rows(
+                widths.changes,
+                widget_status_rows,
+                diff_summary,
+                titles,
+                slack_threads,
+                ide,
+                cwd,
+                session_mark,
+            );
+            self.changes_cache = Some((changes_key, rows));
+        }
+
+        let new_git = &self.git_cache.as_ref().unwrap().1;
+        let new_changes = &self.changes_cache.as_ref().unwrap().1;
+
+        let widget_pty_rows = layout.pty_rows + layout.handoff_rows;
+        let git_col = widths.stats + 1;
+        let changes_col = git_col + widths.git + 1;
+        let flow_col = changes_col + widths.changes + 1;
+        let sep_str = format!("{}│{}", escape::fg(color::DARK_GRAY), RESET);
+
+        self.buf.clear();
+
+        if full_clear {
+            self.buf.extend_from_slice(escape::SYNC_BEGIN.as_bytes());
+            write!(
+                self.buf,
+                "\x1b[{};1H{}",
+                layout.pty_rows + 1,
+                escape::CLEAR_TO_END
+            )?;
+            self.buf.extend_from_slice(&self.last_handoff_bytes);
+            self.buf.extend_from_slice(&new_separator);
+
+            let flow_rows_slice = match flow {
+                Some(FlowView::Scene { rows, .. }) => Some(rows),
+                _ => None,
+            };
+            self.last_flow_rows.clear();
+            self.last_flow_cells = None;
+            let flow_rect = widths.flow.map(|w| FlowRect {
+                widget_pty_rows,
+                col: flow_col,
+                width: w,
+                rows: widget_data_rows,
+            });
+            let matching_cells = flow_rect.and_then(|r| {
+                flow_cells
+                    .filter(|c| c.columns == r.width as usize && c.rows == r.rows as usize)
+                    .map(|c| (r, c))
+            });
+            if matching_cells.is_none() {
+                if let Some(flow_width) = widths.flow {
+                    self.last_flow_rows.reserve(widget_data_rows as usize);
+                    for idx in 0..widget_data_rows as usize {
+                        let text = format_flow_row_text(
+                            flow_rows_slice.and_then(|r| r.get(idx)).map(String::as_str),
+                            flow_width as usize,
+                            flow_exact_width,
+                        );
+                        self.last_flow_rows.push(text);
+                    }
+                }
+            }
+
+            for idx in 0..widget_data_rows as usize {
+                let term_row = widget_pty_rows + 2 + idx as u16;
+                write!(self.buf, "\x1b[{};1H", term_row)?;
+                self.buf.extend_from_slice(new_stats[idx].as_bytes());
+                self.buf.extend_from_slice(sep_str.as_bytes());
+                self.buf.extend_from_slice(new_git[idx].as_bytes());
+                self.buf.extend_from_slice(sep_str.as_bytes());
+                self.buf.extend_from_slice(new_changes[idx].as_bytes());
+                if widths.flow.is_some() {
+                    self.buf.extend_from_slice(sep_str.as_bytes());
+                    if matching_cells.is_none() {
+                        self.buf.extend_from_slice(self.last_flow_rows[idx].as_bytes());
+                    }
+                }
+            }
+            if let Some((r, cells)) = matching_cells {
+                let mut started = true;
+                write_flow_cells_diff(&mut self.buf, r, cells, None, &mut started);
+                self.last_flow_cells = Some((r, cells.clone()));
+            }
+
+            if let Some((row, col)) = cursor_position {
+                write!(self.buf, "\x1b[{};{}H", row + 1, col + 1)?;
+            }
+            self.buf.extend_from_slice(child_attrs);
+            self.buf.extend_from_slice(escape::SYNC_END.as_bytes());
+
+            stdout.write_all(&self.buf)?;
+            stdout.flush()?;
+
+            self.needs_full_clear = false;
+            self.last_layout = Some(*layout);
+            self.last_widths = Some(widths);
+            self.last_separator_bytes = new_separator;
+            self.last_stats_rows = new_stats;
+            self.last_git_rows = new_git.clone();
+            self.last_changes_rows = new_changes.clone();
+            return Ok(());
+        }
+
+        // Incremental patch path: emit ONLY what actually changed!
+        let mut any_changed = false;
+        let begin_sync = |buf: &mut Vec<u8>, started: &mut bool| {
+            if !*started {
+                buf.extend_from_slice(escape::SYNC_BEGIN.as_bytes());
+                *started = true;
+            }
+        };
+
+        if handoff_changed && layout.handoff_rows > 0 {
+            begin_sync(&mut self.buf, &mut any_changed);
+            for offset in 0..layout.handoff_rows {
+                write!(
+                    self.buf,
+                    "\x1b[{};1H{}",
+                    layout.pty_rows + 1 + offset,
+                    escape::CLEAR_LINE
+                )?;
+            }
+            self.buf.extend_from_slice(&self.last_handoff_bytes);
+        }
+
+        if separator_changed {
+            begin_sync(&mut self.buf, &mut any_changed);
+            self.buf.extend_from_slice(&new_separator);
+            self.last_separator_bytes = new_separator;
+        }
+
+        let flow_rect = widths.flow.map(|w| FlowRect {
+            widget_pty_rows,
+            col: flow_col,
+            width: w,
+            rows: widget_data_rows,
+        });
+        let matching_cells = flow_rect.and_then(|r| {
+            flow_cells
+                .filter(|c| c.columns == r.width as usize && c.rows == r.rows as usize)
+                .map(|c| (r, c))
+        });
+
+        for idx in 0..widget_data_rows as usize {
+            let term_row = widget_pty_rows + 2 + idx as u16;
+            if self.last_stats_rows.get(idx).map(String::as_str) != Some(new_stats[idx].as_str()) {
+                begin_sync(&mut self.buf, &mut any_changed);
+                write!(self.buf, "\x1b[{};1H", term_row)?;
+                self.buf.extend_from_slice(new_stats[idx].as_bytes());
+            }
+            if git_rebuilt
+                && self.last_git_rows.get(idx).map(String::as_str) != Some(new_git[idx].as_str())
+            {
+                begin_sync(&mut self.buf, &mut any_changed);
+                write!(self.buf, "\x1b[{};{}H", term_row, git_col + 1)?;
+                self.buf.extend_from_slice(new_git[idx].as_bytes());
+            }
+            if changes_rebuilt
+                && self.last_changes_rows.get(idx).map(String::as_str)
+                    != Some(new_changes[idx].as_str())
+            {
+                begin_sync(&mut self.buf, &mut any_changed);
+                write!(self.buf, "\x1b[{};{}H", term_row, changes_col + 1)?;
+                self.buf.extend_from_slice(new_changes[idx].as_bytes());
+            }
+            if matching_cells.is_none() {
+                if let (Some(flow_width), Some(FlowView::Scene { rows, .. })) = (widths.flow, flow) {
+                    self.last_flow_cells = None;
+                    let raw = rows.get(idx).map(String::as_str);
+                    if flow_exact_width {
+                        if let Some(text) = raw {
+                            if self.last_flow_rows.get(idx).map(String::as_str) != Some(text) {
+                                begin_sync(&mut self.buf, &mut any_changed);
+                                write!(self.buf, "\x1b[{};{}H", term_row, flow_col + 1)?;
+                                self.buf.extend_from_slice(text.as_bytes());
+                                if idx < self.last_flow_rows.len() {
+                                    self.last_flow_rows[idx].clear();
+                                    self.last_flow_rows[idx].push_str(text);
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                    let formatted = format_flow_row_text(raw, flow_width as usize, false);
+                    if self.last_flow_rows.get(idx).map(String::as_str) != Some(formatted.as_str())
+                    {
+                        begin_sync(&mut self.buf, &mut any_changed);
+                        write!(self.buf, "\x1b[{};{}H", term_row, flow_col + 1)?;
+                        self.buf.extend_from_slice(formatted.as_bytes());
+                        if idx < self.last_flow_rows.len() {
+                            self.last_flow_rows[idx] = formatted;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some((r, cells)) = matching_cells {
+            let prev = self
+                .last_flow_cells
+                .as_ref()
+                .filter(|(prev_r, _)| *prev_r == r)
+                .map(|(_, c)| c);
+            write_flow_cells_diff(&mut self.buf, r, cells, prev, &mut any_changed);
+            match &mut self.last_flow_cells {
+                Some((prev_r, prev_c))
+                    if *prev_r == r && prev_c.words.len() == cells.words.len() =>
+                {
+                    prev_c.columns = cells.columns;
+                    prev_c.rows = cells.rows;
+                    prev_c.words.copy_from_slice(&cells.words);
+                }
+                slot => {
+                    *slot = Some((r, cells.clone()));
+                }
+            }
+        }
+
+        self.last_stats_rows = new_stats;
+        if git_rebuilt {
+            self.last_git_rows = new_git.clone();
+        }
+        if changes_rebuilt {
+            self.last_changes_rows = new_changes.clone();
+        }
+
+        if !any_changed {
+            return Ok(());
+        }
+
+        if let Some((row, col)) = cursor_position {
+            write!(self.buf, "\x1b[{};{}H", row + 1, col + 1)?;
+        }
+        self.buf.extend_from_slice(child_attrs);
+        self.buf.extend_from_slice(escape::SYNC_END.as_bytes());
+        stdout.write_all(&self.buf)?;
+        stdout.flush()?;
+        Ok(())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_handoff_key(
+    layout: &Layout,
+    pairing_state: &PairingState,
+    update_state: &UpdateState,
+    recap_state: &RecapState,
+    recap_toast_visible: bool,
+    prs: &[SessionPr],
+    pr_scope: &str,
+    cooldowns: &Cooldowns,
+    now_ms: u64,
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    layout.pty_rows.hash(&mut hasher);
+    layout.total_cols.hash(&mut hasher);
+    layout.handoff_rows.hash(&mut hasher);
+    update_state.should_show_banner().hash(&mut hasher);
+    update_state.new_version.hash(&mut hasher);
+    update_state.summary.hash(&mut hasher);
+    pairing_state.has_linked_devices.hash(&mut hasher);
+    pairing_state.pairing_code.hash(&mut hasher);
+    pairing_state.just_paired.hash(&mut hasher);
+    pairing_state.should_show_toast().hash(&mut hasher);
+    std::mem::discriminant(&recap_state.status).hash(&mut hasher);
+    recap_state.line_delta.hash(&mut hasher);
+    recap_state.latest.hash(&mut hasher);
+    if recap_state.latest.is_some() {
+        // Recap age text changes at 1-minute resolution; bucket by 10s so it
+        // stays fresh without invalidating during high-frequency throbber ticks.
+        (now_ms / 10_000).hash(&mut hasher);
+    }
+    recap_toast_visible.hash(&mut hasher);
+    pr_scope.hash(&mut hasher);
+    prs.len().hash(&mut hasher);
+    for pr in prs {
+        pr.url.hash(&mut hasher);
+        pr.title.hash(&mut hasher);
+        pr.branch.hash(&mut hasher);
+        pr.state.hash(&mut hasher);
+        pr.is_draft.hash(&mut hasher);
+        pr.additions.hash(&mut hasher);
+        pr.deletions.hash(&mut hasher);
+        pr.changed_files.hash(&mut hasher);
+        pr.mergeable.hash(&mut hasher);
+        pr.merge_state_status.hash(&mut hasher);
+        pr.checks_passed.hash(&mut hasher);
+        pr.checks_failed.hash(&mut hasher);
+        pr.checks_pending.hash(&mut hasher);
+        pr.unresolved_comments.hash(&mut hasher);
+        pr.review_decision.hash(&mut hasher);
+        pr.primary.hash(&mut hasher);
+        pr.dismissed.hash(&mut hasher);
+        pr.watched.hash(&mut hasher);
+        pr.fetch_limited.hash(&mut hasher);
+        pr.fetch_error.hash(&mut hasher);
+    }
+    if !prs.is_empty() && cooldowns.active(now_ms) {
+        cooldown::shade_step(now_ms).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn hash_titles(titles: crate::title::SessionTitleHierarchy<'_>) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    titles.generated_title.hash(&mut hasher);
+    if let Some(pr) = titles.official_pr {
+        pr.number.hash(&mut hasher);
+        pr.title.hash(&mut hasher);
+        pr.url.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn hash_slack(threads: &[SlackThread]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    threads.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Draw the entire status bar area with all widgets
 ///
 /// IMPORTANT: This function receives the cursor position from the caller
@@ -313,237 +1005,36 @@ pub fn draw_status_bar(
     secondary_attached: bool,
     flow: Option<FlowView>,
 ) -> Result<()> {
-    // Begin synchronized update - terminal batches all our drawing
-    // so cursor movements don't interfere with Claude's incremental updates
-    write!(stdout, "{}", escape::SYNC_BEGIN)?;
-
-    // Clear the entire status bar area first to prevent artifacts
-    // This is critical: without clearing, resizes or partial redraws leave old content
-    write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1, 1))?;
-    write!(stdout, "{}", escape::CLEAR_TO_END)?;
-
-    // The handoff reserves only the rows its visible content actually needs.
-    let update_banner_rows = update_state.banner_rows();
-    let pairing_compact = update_banner_rows > 0;
-    let pairing_banner_rows = if pairing_compact {
-        pairing_state.banner_rows_compact()
-    } else {
-        pairing_state.banner_rows()
-    };
-
-    // Move to banner area (below PTY scroll region)
-    write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1, 1))?;
-
-    // Track current row for stacking banners
-    let mut current_banner_row = layout.pty_rows + 1;
-
-    // Draw update banner first (if needed) - single row
-    if update_banner_rows > 0 {
-        draw_update_banner(stdout, current_banner_row, layout.total_cols, update_state)?;
-        current_banner_row += update_banner_rows;
-    }
-
-    let banner_rows_reserved = layout
-        .handoff_rows
-        .saturating_sub(pr_separator_rows(prs))
-        .saturating_sub(pr_handoff_rows(prs));
-    let handoff_limit = layout.pty_rows + banner_rows_reserved;
-    let remaining_rows = banner_rows_reserved.saturating_sub(update_banner_rows);
-    let recap_rows = draw_recap_handoff(
+    let mut renderer = StatusBarRenderer::new();
+    renderer.draw(
         stdout,
-        current_banner_row,
-        layout.total_cols,
+        layout,
+        session_stats,
+        git_state,
+        0,
+        diff_summary,
+        0,
+        terminal_title,
+        slack_threads,
+        ide,
+        cwd,
+        cloud_status,
+        pairing_state,
+        update_state,
         recap_state,
-        remaining_rows,
         recap_toast_visible,
-    )?;
-    current_banner_row += recap_rows;
-
-    // Draw pairing banner if needed, there's room, and recap is not occupying the handoff.
-    if recap_rows == 0 && pairing_banner_rows > 0 {
-        let end_row = current_banner_row
-            .saturating_add(pairing_banner_rows)
-            .saturating_sub(1);
-        if end_row <= handoff_limit {
-            draw_pairing_banner(
-                stdout,
-                current_banner_row,
-                layout.total_cols,
-                pairing_state,
-                pairing_compact,
-            )?;
-        }
-    }
-
-    // PR list occupies the handoff rows that grew below the recap region. The
-    // layout already reserved these rows (pty_rows accounts for total_handoff),
-    // so they sit directly above the widget separator.
-    let pr_rows = pr_handoff_rows(prs);
-    if pr_rows > 0 {
-        let divider_row = layout.pty_rows + 1 + banner_rows_reserved;
-        draw_pr_separator(stdout, divider_row, layout.total_cols)?;
-        let pr_start = divider_row + pr_separator_rows(prs);
-        draw_pr_handoff(
-            stdout,
-            pr_start,
-            layout.total_cols,
-            prs,
-            pr_scope,
-            pr_rows,
-            cooldowns,
-            now_ms,
-        )?;
-    }
-
-    // Draw thick separator line (always after the reserved handoff space)
-    let separator_row = layout.pty_rows + 1 + layout.handoff_rows;
-    write!(stdout, "{}", escape::cursor_to(separator_row, 1))?;
-    write!(
-        stdout,
-        "{}{}",
-        escape::bg(color::BG_DARK),
-        escape::fg(color::DARK_GRAY)
-    )?;
-    for _ in 0..layout.total_cols {
-        write!(stdout, "━")?;
-    }
-    write!(stdout, "{}", RESET)?;
-    // Over the flow column: its scene and the key that rotates it, or with
-    // the column off, the key that turns it on.
-    if let (Some(view), Some(width)) = (
+        prs,
+        pr_scope,
+        cursor_position,
+        b"",
+        cooldowns,
+        now_ms,
+        session_mark,
+        secondary_attached,
         flow,
-        flow_column_width(layout.total_cols, layout.status_rows),
-    ) {
-        draw_flow_label(stdout, separator_row, layout.total_cols, width, view)?;
-    }
-    let is_paired = pairing_state.has_linked_devices;
-    // No bottom footer any more — the entire status_rows budget goes to the
-    // widget separator and widget content.
-    let widget_status_rows = layout.status_rows.max(1);
-    let widget_data_rows = widget_status_rows.saturating_sub(1);
-
-    // Widen stats as soon as its normal list would be clipped. The compact
-    // renderer uses the extra width to fit two complete metrics on each row.
-    let compact = stats_use_compact_layout(widget_data_rows);
-
-    // Check if git needs multiple columns (files > available rows)
-    let git_available_rows = widget_status_rows.saturating_sub(2) as usize; // -2 for separator + header
-    let git_needs_multi_column = git_state.files.len() > git_available_rows;
-
-    // Stats keeps its share; git and changes split the rest 3:5 (4:4 when git
-    // needs several columns); flow, when it has a frame, takes 15% on the right.
-    let widths = column_widths(
-        layout.total_cols,
-        layout.status_rows,
-        compact,
-        git_needs_multi_column,
-        matches!(flow, Some(FlowView::Scene { .. })),
-    );
-    let (stats_width, git_width, changes_width) = (widths.stats, widths.git, widths.changes);
-    let titles = session_title_hierarchy(prs, terminal_title);
-    let state_tint = cooldowns.tint(cooldown::SESSION_STATE_KEY, now_ms);
-
-    // Draw content rows (after reserved handoff space + separator).
-    let widget_pty_rows = layout.pty_rows + layout.handoff_rows;
-    for widget_row in 1..=widget_data_rows {
-        // Stats column (leftmost, fixed width)
-        draw_stats_widget(
-            stdout,
-            WidgetArea {
-                pty_rows: widget_pty_rows,
-                col: 0,
-                row: widget_row,
-                width: stats_width,
-                height: widget_status_rows,
-            },
-            session_stats,
-            cloud_status,
-            is_paired,
-            pairing_state.pairing_code.as_deref(),
-            state_tint,
-            session_mark,
-            secondary_attached,
-        )?;
-
-        // Separator
-        write!(stdout, "{}│{}", escape::fg(color::DARK_GRAY), RESET)?;
-
-        // Track current column position
-        let mut current_col = stats_width + 1;
-
-        // Git column
-        draw_git_widget(
-            stdout,
-            WidgetArea {
-                pty_rows: widget_pty_rows,
-                col: current_col,
-                row: widget_row,
-                width: git_width,
-                height: widget_status_rows,
-            },
-            git_state,
-            ide,
-            cwd,
-        )?;
-
-        // Separator
-        write!(stdout, "{}│{}", escape::fg(color::DARK_GRAY), RESET)?;
-        current_col += git_width + 1;
-
-        // Changes column (rightmost)
-        draw_changes_widget(
-            stdout,
-            WidgetArea {
-                pty_rows: widget_pty_rows,
-                col: current_col,
-                row: widget_row,
-                width: changes_width,
-                height: widget_status_rows,
-            },
-            diff_summary,
-            titles,
-            slack_threads,
-            ide,
-            cwd,
-            session_mark,
-        )?;
-
-        // Flow column (rightmost, when it shows)
-        if let (Some(flow_width), Some(FlowView::Scene { rows, .. })) = (widths.flow, flow) {
-            write!(stdout, "{}│{}", escape::fg(color::DARK_GRAY), RESET)?;
-            current_col += changes_width + 1;
-            draw_flow_row(
-                stdout,
-                WidgetArea {
-                    pty_rows: widget_pty_rows,
-                    col: current_col,
-                    row: widget_row,
-                    width: flow_width,
-                    height: widget_status_rows,
-                },
-                rows.get(widget_row as usize - 1).map(String::as_str),
-            )?;
-        }
-    }
-
-    // The Pair code lives in the stats header and the recap toast/hint live
-    // in the handoff strip above the PTY, so there's no longer a bottom
-    // footer row to render here.
-
-    // Restore cursor to position known by vt100 parser
-    // We use absolute positioning instead of CURSOR_SAVE/RESTORE because
-    // the vt100 parser doesn't track those, which would cause DSR responses
-    // to be wrong and corrupt Claude's incremental screen updates.
-    if let Some((row, col)) = cursor_position {
-        // Convert from 0-indexed (vt100) to 1-indexed (terminal)
-        write!(stdout, "{}", escape::cursor_to(row + 1, col + 1))?;
-    }
-
-    // End synchronized update - terminal renders all our drawing atomically
-    write!(stdout, "{}", escape::SYNC_END)?;
-    stdout.flush()?;
-
-    Ok(())
+        None,
+        false,
+    )
 }
 
 // Pair URL and recap messages now render in the stats header and handoff
@@ -764,14 +1255,11 @@ mod tests {
                 children: Vec::new(),
             })
             .collect();
-        let diff = DiffSummary {
-            files: vec![FileChanges {
-                path: "src/lib.rs".to_string(),
-                language: "Rust".to_string(),
-                changes,
-            }],
-            loading: false,
-        };
+        let diff = DiffSummary::from_files(vec![FileChanges {
+            path: "src/lib.rs".to_string(),
+            language: "Rust".to_string(),
+            changes,
+        }]);
         // Wide terminal (250 cols): preferred ceiling is 20, but the natural
         // packed layout for stats(7) and changes(~7) plus separator should
         // come in well under that — typical of the user's bottom-screenshot
@@ -1018,5 +1506,354 @@ mod tests {
         for r in 32..40u16 {
             assert_ne!(screen.cell(r, flow.col - 1).unwrap().contents(), "│");
         }
+    }
+
+    fn assert_screens_equal(a: &vt100::Screen, b: &vt100::Screen, context: &str) {
+        assert_eq!(a.size(), b.size(), "{context}: screen size");
+        assert_eq!(
+            a.cursor_position(),
+            b.cursor_position(),
+            "{context}: cursor position"
+        );
+        let (rows, cols) = a.size();
+        for r in 0..rows {
+            for c in 0..cols {
+                let ca = a.cell(r, c).unwrap();
+                let cb = b.cell(r, c).unwrap();
+                assert_eq!(
+                    (
+                        ca.contents(),
+                        ca.fgcolor(),
+                        ca.bgcolor(),
+                        ca.bold(),
+                        ca.italic(),
+                        ca.underline()
+                    ),
+                    (
+                        cb.contents(),
+                        cb.fgcolor(),
+                        cb.bgcolor(),
+                        cb.bold(),
+                        cb.italic(),
+                        cb.underline()
+                    ),
+                    "{context}: mismatch at row {r} col {c}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn incremental_redraws_match_full_redraw_cell_for_cell() {
+        use crate::git::FileStatus;
+        use crate::parsers::{ChangeNode, ChangeType, FileChanges, NodeKind};
+        use crate::platforms::SessionState;
+
+        let (cols, rows) = (180u16, 48u16);
+        let mut stats = SessionStats::new();
+        stats.work_seconds = 95;
+        stats.platform_stats.state = SessionState::Complete;
+        stats.platform_stats.prompts = 2;
+        stats.platform_stats.completions = 2;
+
+        let mut git = GitState::default();
+        git.is_repo = true;
+        git.branch = "feat/perf".to_string();
+        git.files = (0..12)
+            .map(|i| FileStatus {
+                status: "M".to_string(),
+                path: format!("src/mod_{i}.rs"),
+                additions: 4 + i,
+                deletions: 1,
+                is_folder: false,
+                file_count: 0,
+            })
+            .collect();
+
+        let mut diff = DiffSummary::from_files(vec![FileChanges {
+            path: "src/mod_0.rs".to_string(),
+            language: "Rust".to_string(),
+            changes: vec![ChangeNode {
+                kind: NodeKind::Function,
+                name: "draw_fast".to_string(),
+                scope: vec!["Renderer".to_string()],
+                change_type: ChangeType::Modified,
+                additions: 10,
+                deletions: 2,
+                file_path: Some("src/mod_0.rs".to_string()),
+                line_number: Some(42),
+                children: Vec::new(),
+            }],
+        }]);
+
+        let pairing = PairingState::default();
+        let update = UpdateState::default();
+        let recap = RecapState::default();
+        let mut cooldowns = Cooldowns::default();
+        let mark = SessionMark::from_seed("equiv-test");
+        let cwd = Path::new("/tmp/project");
+
+        let mut flow_col = crate::flow::FlowColumn::new(
+            "equiv-test",
+            mark,
+            None,
+            &crate::config::FlowPreferences::default(),
+        );
+        let status_rows = compute_dynamic_status_rows(
+            rows,
+            cols,
+            &stats,
+            &git,
+            &diff,
+            Some("Equivalence test"),
+            &[],
+            &[],
+            0,
+            true,
+        );
+        let layout = Layout {
+            pty_rows: rows - status_rows,
+            total_cols: cols,
+            status_rows,
+            handoff_rows: 0,
+        };
+        let rect = flow_column_rect(&layout).unwrap();
+        flow_col.set_geometry(Some(rect));
+        flow_col.sync_state(SessionState::Thinking);
+        flow_col.tick();
+
+        let mut incremental_vt = vt100::Parser::new(rows, cols, 0);
+        let mut renderer = StatusBarRenderer::new();
+        let mut git_ver = 1u64;
+        let mut diff_ver = 1u64;
+        let mut now_ms = 1_700_000_000_000u64;
+
+        let check_step = |label: &str,
+                          renderer: &mut StatusBarRenderer,
+                          inc_vt: &mut vt100::Parser,
+                          stats: &SessionStats,
+                          git: &GitState,
+                          git_ver: u64,
+                          diff: &DiffSummary,
+                          diff_ver: u64,
+                          flow_col: &crate::flow::FlowColumn,
+                          cooldowns: &Cooldowns,
+                          now_ms: u64,
+                          expect_incremental: bool| {
+            let mut inc_out = Vec::new();
+            let exact = flow_col.frame_exact_width() == Some(rect.width);
+            renderer
+                .draw(
+                    &mut inc_out,
+                    &layout,
+                    stats,
+                    git,
+                    git_ver,
+                    diff,
+                    diff_ver,
+                    Some("Equivalence test"),
+                    &[],
+                    IdeKind::VsCode,
+                    cwd,
+                    None,
+                    &pairing,
+                    &update,
+                    &recap,
+                    false,
+                    &[],
+                    "",
+                    Some((3, 5)),
+                    b"",
+                    cooldowns,
+                    now_ms,
+                    mark,
+                    false,
+                    flow_col.view(),
+                    flow_col.frame_cells(),
+                    exact,
+                )
+                .unwrap();
+            if expect_incremental {
+                assert!(
+                    !inc_out.windows(3).any(|w| w == b"\x1b[J"),
+                    "{label}: incremental draw should not emit CLEAR_TO_END"
+                );
+            }
+            inc_vt.process(&inc_out);
+
+            let mut full_out = Vec::new();
+            draw_status_bar(
+                &mut full_out,
+                &layout,
+                stats,
+                git,
+                diff,
+                Some("Equivalence test"),
+                &[],
+                IdeKind::VsCode,
+                cwd,
+                None,
+                &pairing,
+                &update,
+                &recap,
+                false,
+                &[],
+                "",
+                Some((3, 5)),
+                cooldowns,
+                now_ms,
+                mark,
+                false,
+                flow_col.view(),
+            )
+            .unwrap();
+            let mut full_vt = vt100::Parser::new(rows, cols, 0);
+            full_vt.process(&full_out);
+            assert_screens_equal(inc_vt.screen(), full_vt.screen(), label);
+            inc_out.len()
+        };
+
+        // Step 1: initial full draw
+        let full_bytes = check_step(
+            "initial",
+            &mut renderer,
+            &mut incremental_vt,
+            &stats,
+            &git,
+            git_ver,
+            &diff,
+            diff_ver,
+            &flow_col,
+            &cooldowns,
+            now_ms,
+            false,
+        );
+
+        // Step 2: identical state -> 0 bytes
+        let noop_bytes = check_step(
+            "noop",
+            &mut renderer,
+            &mut incremental_vt,
+            &stats,
+            &git,
+            git_ver,
+            &diff,
+            diff_ver,
+            &flow_col,
+            &cooldowns,
+            now_ms,
+            true,
+        );
+        assert_eq!(noop_bytes, 0, "unchanged state should emit 0 bytes");
+
+        // Step 3: only Stats work_seconds + state cooldown changes (single row patch)
+        now_ms += 60_000;
+        stats.work_seconds += 60;
+        cooldowns.observe_session_state(
+            cooldown::SESSION_STATE_KEY.to_string(),
+            SessionState::Complete,
+            now_ms - 1000,
+        );
+        cooldowns.observe_session_state(
+            cooldown::SESSION_STATE_KEY.to_string(),
+            SessionState::Interrupted,
+            now_ms,
+        );
+        stats.platform_stats.state = SessionState::Interrupted;
+        let stats_patch_bytes = check_step(
+            "stats_only",
+            &mut renderer,
+            &mut incremental_vt,
+            &stats,
+            &git,
+            git_ver,
+            &diff,
+            diff_ver,
+            &flow_col,
+            &cooldowns,
+            now_ms,
+            true,
+        );
+        assert!(
+            stats_patch_bytes < full_bytes / 5,
+            "stats-only patch ({stats_patch_bytes}B) should be a tiny fraction of full draw ({full_bytes}B)"
+        );
+
+        // Step 4: Flow-only differential frame via draw_flow_cells_only (cell-run diff)
+        flow_col.tick();
+        let mut flow_out = Vec::new();
+        renderer
+            .draw_flow_cells_only(
+                &mut flow_out,
+                rect,
+                flow_col.frame_cells().unwrap(),
+                Some((3, 5)),
+                b"",
+            )
+            .unwrap();
+        incremental_vt.process(&flow_out);
+        let mut full_out = Vec::new();
+        draw_status_bar(
+            &mut full_out,
+            &layout,
+            &stats,
+            &git,
+            &diff,
+            Some("Equivalence test"),
+            &[],
+            IdeKind::VsCode,
+            cwd,
+            None,
+            &pairing,
+            &update,
+            &recap,
+            false,
+            &[],
+            "",
+            Some((3, 5)),
+            &cooldowns,
+            now_ms,
+            mark,
+            false,
+            flow_col.view(),
+        )
+        .unwrap();
+        let mut full_vt = vt100::Parser::new(rows, cols, 0);
+        full_vt.process(&full_out);
+        assert_screens_equal(incremental_vt.screen(), full_vt.screen(), "after_flow_only");
+
+        // Step 5: Git + Changes update without resizing
+        git.files[0].additions = 99;
+        git_ver += 1;
+        diff = DiffSummary::from_files(vec![FileChanges {
+            path: "src/mod_0.rs".to_string(),
+            language: "Rust".to_string(),
+            changes: vec![ChangeNode {
+                kind: NodeKind::Function,
+                name: "draw_faster".to_string(),
+                scope: vec!["Renderer".to_string()],
+                change_type: ChangeType::Added,
+                additions: 99,
+                deletions: 0,
+                file_path: Some("src/mod_0.rs".to_string()),
+                line_number: Some(88),
+                children: Vec::new(),
+            }],
+        }]);
+        diff_ver += 1;
+        check_step(
+            "git_and_changes_update",
+            &mut renderer,
+            &mut incremental_vt,
+            &stats,
+            &git,
+            git_ver,
+            &diff,
+            diff_ver,
+            &flow_col,
+            &cooldowns,
+            now_ms,
+            true,
+        );
     }
 }

@@ -251,10 +251,7 @@ fn diff_from_json(changes: Option<&Value>) -> DiffSummary {
             })
         })
         .collect();
-    DiffSummary {
-        files,
-        loading: false,
-    }
+    DiffSummary::from_files(files)
 }
 
 fn node_kind(name: &str) -> NodeKind {

@@ -1032,7 +1032,7 @@ pub(crate) fn pr_action_url(pr: &SessionPr, disposition: &str, scope: &str) -> S
     if pr.owner.is_empty() || pr.repo.is_empty() {
         return String::new();
     }
-    let endpoints = crate::cloud::CloudEndpoints::load().unwrap_or_default();
+    let endpoints = crate::cloud::CloudEndpoints::cached();
     let mut url = format!(
         "{}/pr-action?owner={}&repo={}&number={}&disposition={}",
         endpoints.origin(),

@@ -31,12 +31,20 @@ pub fn wrap(deg: f64) -> f64 {
 }
 
 fn to_linear(c: u32) -> f64 {
-    let v = f64::from(c) / 255.0;
-    if v <= 0.04045 {
-        v / 12.92
-    } else {
-        ((v + 0.055) / 1.055).powf(2.4)
-    }
+    static LUT: std::sync::OnceLock<[f64; 256]> = std::sync::OnceLock::new();
+    let table = LUT.get_or_init(|| {
+        let mut arr = [0.0f64; 256];
+        for (i, slot) in arr.iter_mut().enumerate() {
+            let v = i as f64 / 255.0;
+            *slot = if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            };
+        }
+        arr
+    });
+    table[(c & 255) as usize]
 }
 
 fn to_byte(v: f64) -> u32 {

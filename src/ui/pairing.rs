@@ -101,12 +101,15 @@ impl PairingState {
 }
 
 fn draw_pairing_top_border(stdout: &mut dyn Write, row: u16, width: u16) -> Result<()> {
-    write!(stdout, "{}", escape::cursor_to(row, 1))?;
-    write!(stdout, "{}{}", bg(color::BG_DARK), fg(color::DARK_GRAY))?;
-    for _ in 0..width {
-        write!(stdout, "━")?;
-    }
-    write!(stdout, "{}", RESET)?;
+    write!(
+        stdout,
+        "{}{}{}{}{}",
+        escape::cursor_to(row, 1),
+        bg(color::BG_DARK),
+        fg(color::DARK_GRAY),
+        "━".repeat(width as usize),
+        RESET
+    )?;
     Ok(())
 }
 
@@ -140,7 +143,7 @@ fn draw_pairing_content_row(
     width: u16,
     code: &str,
 ) -> Result<()> {
-    let endpoints = crate::cloud::CloudEndpoints::load().unwrap_or_default();
+    let endpoints = crate::cloud::CloudEndpoints::cached();
     let url = endpoints.dashboard_setup_url(code);
     let dashboard_url = endpoints.dashboard_url();
     let dashboard_label = dashboard_url
@@ -149,12 +152,15 @@ fn draw_pairing_content_row(
         .unwrap_or(&dashboard_url);
 
     // Fill entire row with dark background first
-    write!(stdout, "{}", escape::cursor_to(row, 1))?;
-    write!(stdout, "{}", bg(color::BG_DARK))?;
-    for _ in 0..width {
-        write!(stdout, " ")?;
-    }
-    write!(stdout, "{}", RESET)?;
+    write!(
+        stdout,
+        "{}{}{:width$}{}",
+        escape::cursor_to(row, 1),
+        bg(color::BG_DARK),
+        "",
+        RESET,
+        width = width as usize
+    )?;
 
     // Reposition and draw content
     write!(stdout, "{}", escape::cursor_to(row, 1))?;
@@ -256,15 +262,16 @@ pub fn draw_update_banner(
         (room >= MIN_SUMMARY_WIDTH).then(|| truncate_to_width(summary, room))
     });
 
-    // Draw single row banner with dark background
-    write!(stdout, "{}", escape::cursor_to(row, 1))?;
-    write!(stdout, "{}", bg(color::BG_DARK))?;
-
     // Fill entire row with dark background first
-    for _ in 0..width {
-        write!(stdout, " ")?;
-    }
-    write!(stdout, "{}", RESET)?;
+    write!(
+        stdout,
+        "{}{}{:width$}{}",
+        escape::cursor_to(row, 1),
+        bg(color::BG_DARK),
+        "",
+        RESET,
+        width = width as usize
+    )?;
 
     // Reposition and draw content
     write!(stdout, "{}", escape::cursor_to(row, 1))?;

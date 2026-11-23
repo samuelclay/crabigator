@@ -3,19 +3,17 @@
 //! Shows branch name and file status with change bars.
 //! Automatically uses multiple columns when there are more files than rows.
 
-use std::io::Write;
 use std::path::Path;
 
-use anyhow::Result;
+use unicode_width::UnicodeWidthStr;
 
 use super::utils::{
     compute_unique_display_names, create_folder_bar, digit_count, format_diff_stats,
     format_diff_stats_aligned, get_filename, strip_ansi_len, truncate_path,
 };
-use super::WidgetArea;
 use crate::git::{FileStatus, GitState};
 use crate::ide::IdeKind;
-use crate::terminal::escape::{self, color, fg, hyperlink, RESET};
+use crate::terminal::escape::{color, fg, hyperlink, RESET};
 
 /// Dynamic column widths computed from actual file data
 #[derive(Clone, Copy)]
@@ -103,75 +101,45 @@ pub fn git_natural_rows(git_state: &GitState, available_width: u16) -> u16 {
     1 + n.min(multi_col_rows)
 }
 
-/// Draw the git widget at the given position
-pub fn draw_git_widget(
-    stdout: &mut dyn Write,
-    area: WidgetArea,
+/// Pre-render every data row (`1..height`) of the git widget into exact-width
+/// strings (including 1-col left and right margins) in a single pass.
+///
+/// Computes unique display names, stats column widths, and multi-column or
+/// wrapped layout once for the whole widget instead of repeating per row.
+pub(crate) fn render_git_rows(
+    width: u16,
+    height: u16,
     git_state: &GitState,
     ide: IdeKind,
     cwd: &Path,
-) -> Result<()> {
-    write!(
-        stdout,
-        "{}",
-        escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1)
-    )?;
-    // 1-col left margin so content doesn't sit flush against the separator/edge.
-    write!(stdout, " ")?;
-    let inner_width = area.width.saturating_sub(2) as usize;
+) -> Vec<String> {
+    let data_rows = height.saturating_sub(1);
+    let inner_width = width.saturating_sub(2) as usize;
+    let mut out = Vec::with_capacity(data_rows as usize);
+    if data_rows == 0 {
+        return out;
+    }
 
     let files = &git_state.files;
+    // Row 1: header
+    out.push(format_git_header_row(inner_width, git_state, cwd));
 
-    if area.row == 1 {
-        // Header: working directory on the left, clean/dirty status on the right.
-        // The branch used to live here too, but it now shows in the PR handoff
-        // line above (⎇ branch), so we drop it here to give the dir path room.
-        let left_label = format_cwd_for_header(cwd);
-
-        // Right side: loading, "✓ Clean", or file count
-        let right = if git_state.loading {
-            format!("{}...{}", fg(color::GRAY), RESET)
-        } else if files.is_empty() {
-            format!("{}✓ Clean{}", fg(color::GREEN), RESET)
-        } else {
-            let count = files.len();
-            let label = if count == 1 { "file" } else { "files" };
-            format!("{}{} {}{}", fg(color::YELLOW), count, label, RESET)
-        };
-        let right_len = strip_ansi_len(&right);
-
-        // Let the dir path grow to fill the room left of the status, keeping at
-        // least one column of gap so it never collides with the file count.
-        const PATH_MIN_GAP: usize = 1;
-        let max_path_chars = inner_width.saturating_sub(right_len + PATH_MIN_GAP);
-        let left = format!(
-            "{}{}{}",
-            fg(color::LIGHT_GREEN),
-            truncate_path(&left_label, max_path_chars),
-            RESET
-        );
-        let left_len = strip_ansi_len(&left);
-
-        let pad = inner_width
-            .saturating_sub(left_len + right_len)
-            .max(PATH_MIN_GAP);
-        write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
-        write!(stdout, " ")?;
-        return Ok(());
+    let available_rows = data_rows.saturating_sub(1) as usize;
+    if available_rows == 0 {
+        return out;
     }
 
+    let blank_row = || format!(" {:inner_width$} ", "");
     if files.is_empty() {
-        // No files to display, just clear the row
-        write!(stdout, "{:width$}", "", width = inner_width)?;
-        write!(stdout, " ")?;
-        return Ok(());
+        for _ in 0..available_rows {
+            out.push(blank_row());
+        }
+        return out;
     }
 
-    // Compute unique display names for all files
+    // Compute shared metadata ONCE for all rows.
     let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
     let display_names = compute_unique_display_names(&paths);
-
-    // Calculate max changes for scaling the bar graph
     let max_changes = files
         .iter()
         .map(|f| {
@@ -184,107 +152,76 @@ pub fn draw_git_widget(
         .max()
         .unwrap_or(1)
         .max(1);
-
-    // Compute dynamic stats column widths based on actual data
     let stats_widths = StatsColumnWidths::from_files(files);
-
-    // Available data rows (subtract 2: one for separator row 0, one for header row 1)
-    let available_rows = area.height.saturating_sub(2) as usize;
     let num_files = files.len();
 
-    // Row index (0-based, row 2 = index 0)
-    let row_idx = (area.row - 2) as usize;
-
-    // Decide layout: columns or single-line
-    if available_rows > 0 && num_files <= available_rows {
-        // Single column - simple case
-        if row_idx < num_files {
-            let file = &files[row_idx];
-            let display_name = &display_names[row_idx];
-            let item = format_file_entry(
-                file,
-                display_name,
-                inner_width,
-                max_changes,
-                &stats_widths,
-                ide,
-                cwd,
-            );
-            write!(stdout, "{}", item)?;
-            let content_len = strip_ansi_len(&item);
-            let pad = inner_width.saturating_sub(content_len);
-            write!(stdout, "{:pad$}", "", pad = pad)?;
-        } else {
-            write!(stdout, "{:width$}", "", width = inner_width)?;
+    if num_files <= available_rows {
+        // Single column
+        for row_idx in 0..available_rows {
+            if row_idx < num_files {
+                let item = format_file_entry(
+                    &files[row_idx],
+                    &display_names[row_idx],
+                    inner_width,
+                    max_changes,
+                    &stats_widths,
+                    ide,
+                    cwd,
+                );
+                out.push(pad_git_row(&item, inner_width));
+            } else {
+                out.push(blank_row());
+            }
         }
-    } else if available_rows > 0 {
-        // Multi-column layout
-        let num_cols = num_files.div_ceil(available_rows);
+        return out;
+    }
 
-        // Pre-compute natural widths for all entries (without truncation)
-        let natural_widths: Vec<usize> = files
-            .iter()
-            .enumerate()
-            .map(|(i, file)| {
-                let entry =
-                    format_file_entry_natural(file, &display_names[i], max_changes, &stats_widths);
-                strip_ansi_len(&entry)
-            })
-            .collect();
+    // Multi-column layout
+    let num_cols = num_files.div_ceil(available_rows);
+    const COL_GAP: usize = 2;
+    let mut col_widths: Vec<usize> = vec![0; num_cols];
+    for (col_idx, col_width) in col_widths.iter_mut().enumerate() {
+        let start = col_idx * available_rows;
+        let end = (start + available_rows).min(num_files);
+        for i in start..end {
+            let nw =
+                natural_entry_width(&files[i], &display_names[i], max_changes, &stats_widths);
+            *col_width = (*col_width).max(nw);
+        }
+    }
 
-        // Calculate column widths based on actual content. Inter-column
-        // margin is tracked separately so it's not eaten by the per-column
-        // padding inside `format_file_entry` (which right-aligns the stats).
-        const COL_GAP: usize = 2;
-        let mut col_widths: Vec<usize> = vec![0; num_cols];
+    let gap_total = COL_GAP * num_cols.saturating_sub(1);
+    let total_width_needed: usize = col_widths.iter().sum::<usize>() + gap_total;
+
+    if total_width_needed <= inner_width {
+        let extra_space = inner_width - total_width_needed;
+        let extra_per_col = extra_space / num_cols;
+
         for (col_idx, col_width) in col_widths.iter_mut().enumerate() {
-            let start = col_idx * available_rows;
-            let end = (start + available_rows).min(num_files);
-            for nw in natural_widths.iter().take(end).skip(start) {
-                *col_width = (*col_width).max(*nw);
+            let max_name_in_col = (col_idx * available_rows
+                ..((col_idx + 1) * available_rows).min(num_files))
+                .map(|i| display_names[i].chars().count())
+                .max()
+                .unwrap_or(0);
+            let current_name_width = col_width.saturating_sub(11);
+            let desired_name_width = max_name_in_col.min(30);
+            if desired_name_width > current_name_width {
+                let needed = desired_name_width - current_name_width;
+                *col_width += needed.min(extra_per_col);
             }
         }
 
-        let gap_total = COL_GAP * num_cols.saturating_sub(1);
-        let total_width_needed: usize = col_widths.iter().sum::<usize>() + gap_total;
-
-        if total_width_needed <= inner_width {
-            // Columns fit - distribute extra space proportionally to allow wider names
-            let extra_space = inner_width - total_width_needed;
-            let extra_per_col = extra_space / num_cols;
-
-            // Apply extra space to column widths (cap name portion at 30 chars)
-            for (col_idx, col_width) in col_widths.iter_mut().enumerate() {
-                let max_name_in_col = (col_idx * available_rows
-                    ..((col_idx + 1) * available_rows).min(num_files))
-                    .map(|i| display_names[i].chars().count())
-                    .max()
-                    .unwrap_or(0);
-                // Name width = col_width - 11 (icon + spaces + max bar)
-                // So to allow up to 30 char names: col_width = 30 + 11 = 41 max
-                let current_name_width = col_width.saturating_sub(11);
-                let desired_name_width = max_name_in_col.min(30);
-                if desired_name_width > current_name_width {
-                    let needed = desired_name_width - current_name_width;
-                    *col_width += needed.min(extra_per_col);
-                }
-            }
-
-            // Render with proper alignment, inserting a 2-col gap between
-            // adjacent columns so stats from the previous column don't run
-            // into the next column's status icon.
-            let mut output = String::new();
+        for row_idx in 0..available_rows {
+            let mut output = String::with_capacity(inner_width * 2);
             for (col_idx, col_width) in col_widths.iter().enumerate() {
                 if col_idx > 0 {
-                    output.push_str(&" ".repeat(COL_GAP));
+                    output.push_str("  ");
                 }
                 let file_idx = col_idx * available_rows + row_idx;
                 if file_idx < num_files {
-                    let file = &files[file_idx];
-                    let display_name = &display_names[file_idx];
                     let item = format_file_entry(
-                        file,
-                        display_name,
+                        &files[file_idx],
+                        &display_names[file_idx],
                         *col_width,
                         max_changes,
                         &stats_widths,
@@ -293,80 +230,147 @@ pub fn draw_git_widget(
                     );
                     let item_len = strip_ansi_len(&item);
                     output.push_str(&item);
-                    let pad = col_width.saturating_sub(item_len);
-                    output.push_str(&" ".repeat(pad));
-                } else {
-                    output.push_str(&" ".repeat(*col_width));
-                }
-            }
-            write!(stdout, "{}", output)?;
-            let content_len = strip_ansi_len(&output);
-            let pad = inner_width.saturating_sub(content_len);
-            write!(stdout, "{:pad$}", "", pad = pad)?;
-        } else {
-            // Columns don't fit - wrap items across rows
-            // Build all compact items with their widths
-            let items: Vec<String> = files
-                .iter()
-                .enumerate()
-                .map(|(i, file)| {
-                    format_file_compact(file, &display_names[i], max_changes, ide, cwd)
-                })
-                .collect();
-            let item_widths: Vec<usize> = items.iter().map(|s| strip_ansi_len(s)).collect();
-
-            // Figure out which items go on which row by wrapping
-            let mut rows: Vec<Vec<usize>> = Vec::new();
-            let mut current_row: Vec<usize> = Vec::new();
-            let mut current_width = 0usize;
-
-            for (i, &item_width) in item_widths.iter().enumerate() {
-                let needed = if current_row.is_empty() {
-                    item_width
-                } else {
-                    item_width + 1 // +1 for space separator
-                };
-
-                if current_width + needed <= inner_width {
-                    current_row.push(i);
-                    current_width += needed;
-                } else {
-                    if !current_row.is_empty() {
-                        rows.push(current_row);
-                    }
-                    current_row = vec![i];
-                    current_width = item_width;
-                }
-            }
-            if !current_row.is_empty() {
-                rows.push(current_row);
-            }
-
-            // Render the row for this row_idx
-            if row_idx < rows.len() {
-                let mut output = String::new();
-                for (j, &item_idx) in rows[row_idx].iter().enumerate() {
-                    if j > 0 {
+                    for _ in 0..col_width.saturating_sub(item_len) {
                         output.push(' ');
                     }
-                    output.push_str(&items[item_idx]);
+                } else {
+                    for _ in 0..*col_width {
+                        output.push(' ');
+                    }
                 }
-                write!(stdout, "{}", output)?;
-                let content_len = strip_ansi_len(&output);
-                let pad = inner_width.saturating_sub(content_len);
-                write!(stdout, "{:pad$}", "", pad = pad)?;
-            } else {
-                write!(stdout, "{:width$}", "", width = inner_width)?;
             }
+            out.push(pad_git_row(&output, inner_width));
         }
     } else {
-        write!(stdout, "{:width$}", "", width = inner_width)?;
+        // Wrapped layout: format compact items and wrap ONCE for all rows.
+        let mut rows: Vec<(String, usize)> = Vec::with_capacity(available_rows);
+        let mut current = String::new();
+        let mut current_width = 0usize;
+
+        for (i, file) in files.iter().enumerate() {
+            let item = format_file_compact(file, &display_names[i], max_changes, ide, cwd);
+            let item_width = strip_ansi_len(&item);
+            let needed = if current.is_empty() {
+                item_width
+            } else {
+                item_width + 1
+            };
+
+            if current_width + needed <= inner_width {
+                if !current.is_empty() {
+                    current.push(' ');
+                }
+                current.push_str(&item);
+                current_width += needed;
+            } else {
+                if !current.is_empty() {
+                    rows.push((std::mem::take(&mut current), current_width));
+                    if rows.len() >= available_rows {
+                        break;
+                    }
+                }
+                current = item;
+                current_width = item_width;
+            }
+        }
+        if !current.is_empty() && rows.len() < available_rows {
+            rows.push((current, current_width));
+        }
+
+        for row_idx in 0..available_rows {
+            if let Some((content, content_len)) = rows.get(row_idx) {
+                let pad = inner_width.saturating_sub(*content_len);
+                let mut line = String::with_capacity(content.len() + pad + 2);
+                line.push(' ');
+                line.push_str(content);
+                for _ in 0..pad {
+                    line.push(' ');
+                }
+                line.push(' ');
+                out.push(line);
+            } else {
+                out.push(blank_row());
+            }
+        }
     }
 
-    // 1-col right margin.
-    write!(stdout, " ")?;
+    out
+}
 
-    Ok(())
+fn pad_git_row(content: &str, inner_width: usize) -> String {
+    let content_len = strip_ansi_len(content);
+    let pad = inner_width.saturating_sub(content_len);
+    let mut line = String::with_capacity(content.len() + pad + 2);
+    line.push(' ');
+    line.push_str(content);
+    for _ in 0..pad {
+        line.push(' ');
+    }
+    line.push(' ');
+    line
+}
+
+fn format_git_header_row(inner_width: usize, git_state: &GitState, cwd: &Path) -> String {
+    let left_label = format_cwd_for_header(cwd);
+    let files = &git_state.files;
+    let right = if git_state.loading {
+        format!("{}...{}", fg(color::GRAY), RESET)
+    } else if files.is_empty() {
+        format!("{}✓ Clean{}", fg(color::GREEN), RESET)
+    } else {
+        let count = files.len();
+        let label = if count == 1 { "file" } else { "files" };
+        format!("{}{} {}{}", fg(color::YELLOW), count, label, RESET)
+    };
+    let right_len = strip_ansi_len(&right);
+    const PATH_MIN_GAP: usize = 1;
+    let max_path_chars = inner_width.saturating_sub(right_len + PATH_MIN_GAP);
+    let left = format!(
+        "{}{}{}",
+        fg(color::LIGHT_GREEN),
+        truncate_path(&left_label, max_path_chars),
+        RESET
+    );
+    let left_len = strip_ansi_len(&left);
+    let pad = inner_width
+        .saturating_sub(left_len + right_len)
+        .max(PATH_MIN_GAP);
+    format!(" {left}{:pad$}{right} ", "")
+}
+
+/// Exact display width of `format_file_entry_natural` without allocating strings.
+fn natural_entry_width(
+    file: &FileStatus,
+    display_name: &str,
+    max_changes: usize,
+    stats_widths: &StatsColumnWidths,
+) -> usize {
+    if file.is_folder {
+        let folder_name = get_filename(file.path.trim_end_matches('/'));
+        let count_len = if file.file_count == 0 {
+            7 // "0 files"
+        } else {
+            digit_count(file.file_count) + 6 // "N files"
+        };
+        let bar_len = if file.file_count == 0 {
+            2
+        } else {
+            let max_c = max_changes.max(1);
+            let scaled = ((file.file_count as f64 / max_c as f64) * 8.0).ceil() as usize;
+            scaled.clamp(1, 8)
+        };
+        // "{icon} {folder_name}/ {count} {bar}"
+        1 + 1 + folder_name.width() + 1 + 1 + count_len + 1 + bar_len
+    } else {
+        let stats_w = if file.additions + file.deletions == 0 {
+            let total = stats_widths.total_width();
+            (total / 2) * 2 + 1
+        } else {
+            stats_widths.total_width()
+        };
+        // "{icon} {display_name} {stats}"
+        1 + 1 + display_name.width() + 1 + stats_w
+    }
 }
 
 fn format_cwd_for_header(cwd: &Path) -> String {
@@ -429,55 +433,6 @@ fn get_status_icon_color(status: &str) -> (&'static str, u8) {
         "D" => ("−", color::RED),
         "??" | "?" => ("?", color::CYAN),
         _ => ("•", color::FAINT),
-    }
-}
-
-/// Format a file entry at its natural width (no truncation) to measure actual size
-#[allow(unused_variables)]
-fn format_file_entry_natural(
-    file: &FileStatus,
-    display_name: &str,
-    max_changes: usize,
-    stats_widths: &StatsColumnWidths,
-) -> String {
-    let (icon, icon_color) = get_status_icon_color(&file.status);
-
-    if file.is_folder {
-        let folder_name = get_filename(file.path.trim_end_matches('/'));
-        let count_display = if file.file_count == 0 {
-            format!("{}0 files{}", fg(color::DARK_GRAY), RESET)
-        } else {
-            format!("{}{} files{}", fg(color::GRAY), file.file_count, RESET)
-        };
-        let bar = create_folder_bar(file.file_count, max_changes, 8);
-        format!(
-            "{}{}{} {}/ {} {}",
-            fg(icon_color),
-            icon,
-            RESET,
-            folder_name,
-            count_display,
-            bar
-        )
-    } else {
-        // Natural width with aligned stats columns
-        let stats = format_diff_stats_aligned(
-            file.additions,
-            file.deletions,
-            true,
-            stats_widths.del_num,
-            stats_widths.del_bar,
-            stats_widths.add_bar,
-            stats_widths.add_num,
-        );
-        format!(
-            "{}{}{} {} {}",
-            fg(icon_color),
-            icon,
-            RESET,
-            display_name,
-            stats
-        )
     }
 }
 

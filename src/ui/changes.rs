@@ -3,12 +3,9 @@
 //! Shows parsed semantic changes (functions, classes, etc.) from git diffs,
 //! organized by programming language with per-change line stats.
 
-use std::io::Write;
 use std::path::Path;
 
 use unicode_width::UnicodeWidthStr;
-
-use anyhow::Result;
 
 use crate::ide::IdeKind;
 use crate::parsers::{ChangeNode, ChangeType, DiffSummary, LanguageChanges, NodeKind};
@@ -16,13 +13,12 @@ use crate::pr::SessionPr;
 use crate::session_mark::SessionMark;
 use crate::slack::{compact_display_label, SlackThread};
 use crate::terminal::escape::{
-    self, color, fg, hyperlink, BOLD, ITALIC, RESET, RESET_BOLD, RESET_UNDERLINE, UNDERLINE,
+    color, fg, hyperlink, BOLD, ITALIC, RESET, RESET_BOLD, RESET_UNDERLINE, UNDERLINE,
 };
 use crate::title::SessionTitleHierarchy;
 
 use super::pr_cells::truncate_to_width;
 use super::utils::{digit_count, strip_ansi_len, truncate_middle};
-use super::WidgetArea;
 
 /// Columns the message snippet is indented from the Slack link above it.
 const SLACK_SNIPPET_INDENT: usize = 2;
@@ -110,7 +106,7 @@ pub fn changes_natural_rows(
     slack_threads: &[SlackThread],
 ) -> u16 {
     let slack_rows = slack_row_count(slack_threads);
-    let langs = diff_summary.by_language();
+    let langs = diff_summary.by_language_slice();
     if langs.is_empty() {
         return (title_rows + slack_rows).max(1);
     }
@@ -124,7 +120,7 @@ pub fn changes_natural_rows(
     let items_per_row = ((row_w + 2) / (AVG_ITEM_WIDTH + 2)).max(1) as u16;
 
     let mut rows: u16 = langs.len() as u16; // one header row per language
-    for lang in &langs {
+    for lang in langs {
         let n = lang.changes.len() as u16;
         if n == 0 {
             continue;
@@ -165,129 +161,127 @@ fn slack_row_count(threads: &[SlackThread]) -> u16 {
     u16::try_from(slack_rows(threads).count()).unwrap_or(u16::MAX)
 }
 
-/// Draw the changes widget at the given position
+/// Pre-render every data row (`1..height`) of the changes widget into exact-width
+/// strings (including 1-col left and right margins) in a single pass.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_changes_widget(
-    stdout: &mut dyn Write,
-    area: WidgetArea,
+pub(crate) fn render_changes_rows(
+    width: u16,
+    height: u16,
     diff_summary: &DiffSummary,
     titles: SessionTitleHierarchy<'_>,
     slack_threads: &[SlackThread],
     ide: IdeKind,
     cwd: &Path,
     session_mark: SessionMark,
-) -> Result<()> {
-    write!(
-        stdout,
-        "{}",
-        escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1)
-    )?;
-    // 1-col left margin so content doesn't sit flush against the separator/edge.
-    write!(stdout, " ")?;
-    let inner_width = area.width.saturating_sub(2);
+) -> Vec<String> {
+    let data_rows = height.saturating_sub(1);
+    let inner_width = width.saturating_sub(2);
     let inner_width_usize = inner_width as usize;
-
-    // Get changes grouped by language
-    let by_language = diff_summary.by_language();
-
-    let title_rows = titles.row_count();
-    let prefix_rows = title_rows.saturating_add(slack_row_count(slack_threads));
-
-    // Session title on row 1, with the identity chip alone at the right edge.
-    // Purple `#N: title` sits under the session title and stops short of that
-    // chip. The PR takes row 1 when there is no session title.
-    if let Some(header) = title_header_row(titles, area.row, inner_width_usize, session_mark) {
-        write_padded_row(stdout, &header, inner_width_usize)?;
-        return Ok(());
+    let mut out = Vec::with_capacity(data_rows as usize);
+    if data_rows == 0 {
+        return out;
     }
 
+    let by_language = diff_summary.by_language_slice();
+    let title_rows = titles.row_count();
+    let slack_list: Vec<SlackRow<'_>> = slack_rows(slack_threads).collect();
+    let slack_count = u16::try_from(slack_list.len()).unwrap_or(u16::MAX);
+    let prefix_rows = title_rows.saturating_add(slack_count);
+
+    // Build all change rows ONCE for the entire widget instead of once per row.
+    let rows_data = if by_language.is_empty() {
+        Vec::new()
+    } else {
+        let available_rows = height.saturating_sub(1 + prefix_rows) as usize;
+        build_rows_for_display(by_language, inner_width, available_rows, ide, cwd)
+    };
+
+    let blank_row = || format!(" {:inner_width_usize$} ", "");
+    let pad_row = |content: &str| -> String {
+        let content_len = strip_ansi_len(content);
+        let pad = inner_width_usize.saturating_sub(content_len);
+        let mut line = String::with_capacity(content.len() + pad + 2);
+        line.push(' ');
+        line.push_str(content);
+        for _ in 0..pad {
+            line.push(' ');
+        }
+        line.push(' ');
+        line
+    };
+
     let slack_start_row = title_rows + 1;
-    if area.row >= slack_start_row {
-        let offset = (area.row - slack_start_row) as usize;
-        if let Some(slack_row) = slack_rows(slack_threads).nth(offset) {
-            let row = match slack_row {
-                SlackRow::Link(thread) => {
-                    let label = compact_display_label(thread, inner_width_usize);
-                    format!(
-                        "{}{}{}",
-                        fg(color::CYAN),
-                        hyperlink(&thread.url, &label),
-                        RESET
-                    )
-                }
-                SlackRow::Snippet(thread, text) => {
-                    slack_snippet_row(thread, text, inner_width_usize)
-                }
+    for row in 1..=data_rows {
+        if let Some(header) = title_header_row(titles, row, inner_width_usize, session_mark) {
+            out.push(pad_row(&header));
+            continue;
+        }
+        if row >= slack_start_row {
+            let offset = (row - slack_start_row) as usize;
+            if let Some(slack_row) = slack_list.get(offset) {
+                let text = match slack_row {
+                    SlackRow::Link(thread) => {
+                        let label = compact_display_label(thread, inner_width_usize);
+                        format!(
+                            "{}{}{}",
+                            fg(color::CYAN),
+                            hyperlink(&thread.url, &label),
+                            RESET
+                        )
+                    }
+                    SlackRow::Snippet(thread, text) => {
+                        slack_snippet_row(thread, text, inner_width_usize)
+                    }
+                };
+                out.push(pad_row(&text));
+                continue;
+            }
+        }
+        if row == 1 && prefix_rows == 0 {
+            let header = if diff_summary.loading {
+                format!(
+                    "{}Changes{} {}...{}",
+                    fg(color::ORANGE),
+                    RESET,
+                    fg(color::GRAY),
+                    RESET
+                )
+            } else if let Some(first_lang) = by_language.first() {
+                let total: usize = by_language.iter().map(|l| l.changes.len()).sum();
+                let change_word = if total == 1 { "change" } else { "changes" };
+                format!(
+                    "{}{}{} {}{} {}{}",
+                    fg(color::ORANGE),
+                    first_lang.language,
+                    RESET,
+                    fg(color::GRAY),
+                    total,
+                    change_word,
+                    RESET
+                )
+            } else {
+                String::new()
             };
-            write_padded_row(stdout, &row, inner_width_usize)?;
-            return Ok(());
+            out.push(pad_row(&header));
+            continue;
+        }
+        if by_language.is_empty() {
+            out.push(blank_row());
+            continue;
+        }
+        let row_idx = if prefix_rows > 0 {
+            row.saturating_sub(prefix_rows + 1) as usize
+        } else {
+            (row - 1) as usize
+        };
+        if let Some(content) = rows_data.get(row_idx) {
+            out.push(pad_row(content));
+        } else {
+            out.push(blank_row());
         }
     }
 
-    // Without title/link context, the first language header doubles as the
-    // top row so the widget never wastes a line.
-    if area.row == 1 && prefix_rows == 0 {
-        let header = if diff_summary.loading {
-            format!(
-                "{}Changes{} {}...{}",
-                fg(color::ORANGE),
-                RESET,
-                fg(color::GRAY),
-                RESET
-            )
-        } else if let Some(first_lang) = by_language.first() {
-            let total: usize = by_language.iter().map(|l| l.changes.len()).sum();
-            let change_word = if total == 1 { "change" } else { "changes" };
-            format!(
-                "{}{}{} {}{} {}{}",
-                fg(color::ORANGE),
-                first_lang.language,
-                RESET,
-                fg(color::GRAY),
-                total,
-                change_word,
-                RESET
-            )
-        } else {
-            String::new()
-        };
-        write_padded_row(stdout, &header, inner_width_usize)?;
-        return Ok(());
-    }
-
-    if by_language.is_empty() {
-        write!(stdout, "{:width$}", "", width = inner_width_usize)?;
-        write!(stdout, " ")?;
-        return Ok(());
-    }
-
-    // Build rows to display
-    let available_rows = area.height.saturating_sub(1 + prefix_rows) as usize;
-    let rows_data = build_rows_for_display(&by_language, inner_width, available_rows, ide, cwd);
-
-    // Map the terminal row to a built row. When the title occupies the top row,
-    // the first language header (rows_data[0]) shows on the row just below it;
-    // otherwise that header already lives on the top row, so we skip it here.
-    let row_idx = if prefix_rows > 0 {
-        area.row.saturating_sub(prefix_rows + 1) as usize
-    } else {
-        (area.row - 1) as usize
-    };
-
-    if row_idx < rows_data.len() {
-        let content = &rows_data[row_idx];
-        write!(stdout, "{}", content)?;
-        let content_len = strip_ansi_len(content);
-        let pad = inner_width_usize.saturating_sub(content_len);
-        write!(stdout, "{:pad$}", "", pad = pad)?;
-    } else {
-        write!(stdout, "{:width$}", "", width = inner_width_usize)?;
-    }
-
-    // 1-col right margin.
-    write!(stdout, " ")?;
-
-    Ok(())
+    out
 }
 
 /// The message snippet under a Slack link: indented, italic, and muted so it
@@ -384,12 +378,6 @@ fn format_official_title_row(pr: &SessionPr, width: usize, mark: Option<SessionM
         Some(mark) => place_mark_on_the_right(&left, width, mark),
         None => left,
     }
-}
-
-fn write_padded_row(stdout: &mut dyn Write, content: &str, width: usize) -> Result<()> {
-    let pad = width.saturating_sub(strip_ansi_len(content));
-    write!(stdout, "{}{:pad$} ", content, "", pad = pad)?;
-    Ok(())
 }
 
 /// Formatted item with its display width

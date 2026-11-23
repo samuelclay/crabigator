@@ -55,12 +55,12 @@ use crate::session_mark::SessionMark;
 use crate::ui::{FlowRect, FlowView};
 
 use activity::{Activity, FRAME_MS};
-use cells::Cells;
 use feed::{ActivityFeed, Heard};
 use hooks::HookFeed;
 use palette::Palette;
 use scene::{Scene, SceneDef};
 pub use cells::is_tall;
+pub(crate) use cells::{Cells, DEFAULT_COLOR};
 pub use scene::Tint;
 
 /// Frame pace while busy (~14 fps), and when calm (8 fps).
@@ -110,6 +110,11 @@ pub struct FlowColumn {
     /// Where the screen shows the column now.
     drawn: Option<FlowRect>,
     frame: Option<Vec<String>>,
+    /// Reusable buffer for building the next frame's ANSI rows without reallocating.
+    scratch_frame: Vec<String>,
+    /// Exact column width of `frame` when generated directly by `grid_to_ansi_into`
+    /// (`None` for picker rows, which still pass through `fit_ansi_to_width`).
+    frame_exact_width: Option<u16>,
     last_tick: Instant,
     /// The session's state as last seen (`None` before the first).
     state: Option<SessionState>,
@@ -153,6 +158,8 @@ impl FlowColumn {
             geometry: None,
             drawn: None,
             frame: None,
+            scratch_frame: Vec::new(),
+            frame_exact_width: None,
             last_tick: Instant::now(),
             state: None,
             seed,
@@ -371,6 +378,7 @@ impl FlowColumn {
             let changed = self.frame.as_ref() != Some(&rows);
             let column_toggled = self.frame.is_none();
             self.frame = Some(rows);
+            self.frame_exact_width = None;
             return FlowChange {
                 new_frame: changed,
                 column_toggled,
@@ -401,17 +409,26 @@ impl FlowColumn {
         self.scene.step();
         let grid = self.scene.grid();
         // The context-full tint must read as blue: no palette then.
-        let rows = if self.palette.is_natural() || tint == Tint::Blue || waiting {
-            ansi::grid_to_ansi(grid)
+        // Keep the latest displayed grid in `self.turned` so `frame_cells(&self)`
+        // can borrow it without invoking `scene.grid()` again.
+        if self.palette.is_natural() || tint == Tint::Blue || waiting {
+            if self.turned.columns != grid.columns || self.turned.rows != grid.rows {
+                self.turned = grid.clone();
+            } else {
+                self.turned.words.copy_from_slice(&grid.words);
+            }
         } else {
             self.palette.apply(grid, &mut self.turned);
-            ansi::grid_to_ansi(&self.turned)
-        };
-        if self.frame.as_ref() == Some(&rows) {
+        }
+        ansi::grid_to_ansi_into(&self.turned, &mut self.scratch_frame);
+        if self.frame.as_deref() == Some(self.scratch_frame.as_slice()) {
             return FlowChange::default();
         }
         let column_toggled = self.frame.is_none();
-        self.frame = Some(rows);
+        let prev = self.frame.take().unwrap_or_default();
+        let next = std::mem::replace(&mut self.scratch_frame, prev);
+        self.frame = Some(next);
+        self.frame_exact_width = Some(rect.width);
         FlowChange {
             new_frame: true,
             column_toggled,
@@ -439,6 +456,22 @@ impl FlowColumn {
     /// The latest frame's rows.
     pub fn frame_rows(&self) -> Option<&[String]> {
         self.frame.as_deref()
+    }
+
+    /// Exact column width when `frame_rows()` was rendered directly from a
+    /// scene `Cells` grid (already exact-width and SGR-only).
+    pub fn frame_exact_width(&self) -> Option<u16> {
+        self.frame_exact_width
+    }
+
+    /// The latest rendered scene cell grid (after any session palette shift),
+    /// for zero-allocation cell-run diffing in the terminal renderer.
+    /// Returns `None` when off, before the first frame, or while the picker is open.
+    pub(crate) fn frame_cells(&self) -> Option<&Cells> {
+        if self.off || self.picker.is_some() || self.frame.is_none() {
+            return None;
+        }
+        Some(&self.turned)
     }
 
     /// What the status bar shows: the frame and its scene; off, the label
@@ -689,6 +722,8 @@ mod tests {
             geometry: None,
             drawn: None,
             frame: None,
+            scratch_frame: Vec::new(),
+            frame_exact_width: None,
             last_tick: Instant::now(),
             state: None,
             seed: 7.0,

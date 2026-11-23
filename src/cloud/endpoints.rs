@@ -1,7 +1,10 @@
 //! Cloud origin validation and endpoint construction.
 
+use std::ffi::OsString;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::sync::{OnceLock, RwLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use reqwest::Url;
@@ -9,6 +12,19 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::config::Config;
+
+const ENDPOINTS_CACHE_TTL: Duration = Duration::from_secs(5);
+
+struct CachedEndpoints {
+    config_dir: Option<OsString>,
+    loaded_at: Instant,
+    endpoints: CloudEndpoints,
+}
+
+fn endpoints_cache() -> &'static RwLock<Option<CachedEndpoints>> {
+    static CACHE: OnceLock<RwLock<Option<CachedEndpoints>>> = OnceLock::new();
+    CACHE.get_or_init(|| RwLock::new(None))
+}
 
 pub const OFFICIAL_CLOUD_ORIGIN: &str = "https://drinkcrabigator.com";
 
@@ -35,6 +51,37 @@ impl Default for CloudEndpoints {
 impl CloudEndpoints {
     pub fn load() -> Result<Self> {
         Self::from_config(&Config::load()?)
+    }
+
+    /// Return the configured cloud endpoints, caching the parsed config in memory
+    /// for a short window so hot UI rendering paths never hit the filesystem.
+    pub fn cached() -> Self {
+        let config_dir = std::env::var_os("CRABIGATOR_CONFIG_DIR").filter(|p| !p.is_empty());
+        if let Ok(guard) = endpoints_cache().read() {
+            if let Some(entry) = guard.as_ref() {
+                if entry.config_dir == config_dir
+                    && entry.loaded_at.elapsed() < ENDPOINTS_CACHE_TTL
+                {
+                    return entry.endpoints.clone();
+                }
+            }
+        }
+        let endpoints = Self::load().unwrap_or_default();
+        if let Ok(mut guard) = endpoints_cache().write() {
+            *guard = Some(CachedEndpoints {
+                config_dir,
+                loaded_at: Instant::now(),
+                endpoints: endpoints.clone(),
+            });
+        }
+        endpoints
+    }
+
+    /// Drop any cached endpoints (called after saving config).
+    pub fn invalidate_cache() {
+        if let Ok(mut guard) = endpoints_cache().write() {
+            *guard = None;
+        }
     }
 
     pub fn from_config(config: &Config) -> Result<Self> {

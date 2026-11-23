@@ -2,15 +2,12 @@
 //!
 //! Shows session state, duration, messages, tool calls, compressions, and cloud status.
 
-use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use anyhow::Result;
 
 use super::sparkline::render_sparkline;
 use super::time::{format_duration_compact, format_elapsed_age};
 use super::utils::strip_ansi_len;
-use super::{WidgetArea, COMPLETION_ICON, PROMPT_ICON};
+use super::{COMPLETION_ICON, PROMPT_ICON};
 use crate::cloud::CloudStatus;
 use crate::hooks::SessionStats;
 use crate::platforms::{ContextUsage, SessionState};
@@ -172,11 +169,13 @@ pub fn stats_render_rows(available_rows: u16, stats: &SessionStats) -> u16 {
     }
 }
 
-/// Draw the stats widget at the given position
+/// Pre-render every data row (`1..height`) of the stats widget into exact-width
+/// strings (including 1-col left and right margins) for single-pass or
+/// differential status bar drawing.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_stats_widget(
-    stdout: &mut dyn Write,
-    area: WidgetArea,
+pub(crate) fn render_stats_rows(
+    width: u16,
+    height: u16,
     stats: &SessionStats,
     cloud_status: Option<&CloudStatus>,
     is_paired: bool,
@@ -184,55 +183,51 @@ pub fn draw_stats_widget(
     state_tint: Option<Tint>,
     session_mark: SessionMark,
     secondary_attached: bool,
-) -> Result<()> {
-    write!(
-        stdout,
-        "{}",
-        escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1)
-    )?;
-    // 1-col left margin so content doesn't sit flush against the separator/edge.
-    write!(stdout, " ")?;
+) -> Vec<String> {
+    let data_rows = height.saturating_sub(1);
+    let compact = stats_use_compact_layout(data_rows);
+    let inner_width = width.saturating_sub(2);
+    let inner_width_usize = inner_width as usize;
+    let mut rows = Vec::with_capacity(data_rows as usize);
 
-    // `area.height` includes the separator above the widget data. Switch to the
-    // compact grid as soon as the normal list would be clipped, not only at the
-    // minimum terminal height.
-    let compact = stats_use_compact_layout(area.height.saturating_sub(1));
-    let inner_width = area.width.saturating_sub(2);
-
-    let content = if compact {
-        draw_compact_row(
-            area.row,
-            inner_width,
-            stats,
-            cloud_status,
-            is_paired,
-            pairing_code,
-            state_tint,
-            session_mark,
-            secondary_attached,
-        )
-    } else {
-        draw_normal_row(
-            area.row,
-            inner_width,
-            stats,
-            cloud_status,
-            is_paired,
-            pairing_code,
-            state_tint,
-            session_mark,
-            secondary_attached,
-        )
-    };
-
-    write!(stdout, "{}", content)?;
-    let content_len = strip_ansi_len(&content);
-    let pad = (inner_width as usize).saturating_sub(content_len);
-    write!(stdout, "{:pad$}", "", pad = pad)?;
-    // 1-col right margin.
-    write!(stdout, " ")?;
-
-    Ok(())
+    for row in 1..=data_rows {
+        let content = if compact {
+            draw_compact_row(
+                row,
+                inner_width,
+                stats,
+                cloud_status,
+                is_paired,
+                pairing_code,
+                state_tint,
+                session_mark,
+                secondary_attached,
+            )
+        } else {
+            draw_normal_row(
+                row,
+                inner_width,
+                stats,
+                cloud_status,
+                is_paired,
+                pairing_code,
+                state_tint,
+                session_mark,
+                secondary_attached,
+            )
+        };
+        let content_len = strip_ansi_len(&content);
+        let pad = inner_width_usize.saturating_sub(content_len);
+        let mut line = String::with_capacity(content.len() + pad + 2);
+        line.push(' ');
+        line.push_str(&content);
+        for _ in 0..pad {
+            line.push(' ');
+        }
+        line.push(' ');
+        rows.push(line);
+    }
+    rows
 }
 
 /// Format cloud status as header text.
@@ -289,9 +284,7 @@ fn build_pair_suffix(code: &str, available: usize) -> Option<(usize, String)> {
     if code.is_empty() {
         return None;
     }
-    let url = crate::cloud::CloudEndpoints::load()
-        .unwrap_or_default()
-        .dashboard_setup_url(code);
+    let url = crate::cloud::CloudEndpoints::cached().dashboard_setup_url(code);
     let dim = fg(color::DARK_GRAY);
     // " · " is 3 visible columns and is rendered *outside* the hyperlink so
     // clicking only triggers on the pair text itself.

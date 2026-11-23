@@ -368,53 +368,82 @@ pub fn strip_ansi_len(s: &str) -> usize {
 pub fn fit_ansi_to_width(s: &str, width: usize) -> String {
     let mut out = String::with_capacity(s.len() + width + RESET.len());
     let mut used = 0;
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            match chars.peek() {
-                Some('[') => {
-                    chars.next();
-                    let mut params = String::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == 0x1b {
+            match bytes.get(i + 1) {
+                Some(b'[') => {
+                    let params_start = i + 2;
+                    let mut j = params_start;
                     let mut end = None;
-                    for nc in chars.by_ref() {
-                        if ('\x40'..='\x7e').contains(&nc) {
-                            end = Some(nc);
+                    while j < bytes.len() {
+                        let nb = bytes[j];
+                        if (0x40..=0x7e).contains(&nb) {
+                            end = Some(nb);
+                            j += 1;
                             break;
                         }
-                        params.push(nc);
+                        j += 1;
                     }
-                    let is_sgr = end == Some('m')
-                        && params
-                            .chars()
-                            .all(|p| p.is_ascii_digit() || p == ';' || p == ':');
-                    if is_sgr {
-                        out.push_str("\x1b[");
-                        out.push_str(&params);
-                        out.push('m');
+                    if end == Some(b'm') {
+                        let params = &bytes[params_start..j - 1];
+                        if params
+                            .iter()
+                            .all(|&p| p.is_ascii_digit() || p == b';' || p == b':')
+                        {
+                            // SAFETY: `bytes[i..j]` is pure ASCII (`\x1b[`, digits/`;`/`:`, `m`).
+                            out.push_str(&s[i..j]);
+                        }
                     }
+                    i = j;
                 }
-                Some(']') => {
+                Some(b']') => {
                     // OSC: skip to BEL or ST.
-                    chars.next();
-                    while let Some(nc) = chars.next() {
-                        if nc == '\x07' {
+                    let mut j = i + 2;
+                    while j < bytes.len() {
+                        if bytes[j] == 0x07 {
+                            j += 1;
                             break;
                         }
-                        if nc == '\x1b' {
-                            if chars.peek() == Some(&'\\') {
-                                chars.next();
+                        if bytes[j] == 0x1b {
+                            j += 1;
+                            if bytes.get(j) == Some(&b'\\') {
+                                j += 1;
                             }
                             break;
                         }
+                        j += 1;
                     }
+                    i = j;
                 }
-                _ => {
-                    // A lone escape or a two-byte sequence: drop both.
-                    chars.next();
+                Some(_) => {
+                    // Two-byte escape sequence: drop ESC and the next char.
+                    let rest = &s[i + 1..];
+                    let skip = rest.chars().next().map_or(0, char::len_utf8);
+                    i += 1 + skip;
+                }
+                None => {
+                    i += 1;
                 }
             }
             continue;
         }
+        if b < 0x80 {
+            i += 1;
+            if b < 0x20 || b == 0x7f {
+                continue;
+            }
+            if used + 1 > width {
+                break;
+            }
+            out.push(b as char);
+            used += 1;
+            continue;
+        }
+        let c = s[i..].chars().next().unwrap();
+        i += c.len_utf8();
         if c.is_control() {
             continue;
         }
