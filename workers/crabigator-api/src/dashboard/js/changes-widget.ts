@@ -145,7 +145,7 @@ export const changesWidgetJs = `
                 if (byLanguage.length > 1) {
                     const langCount = lang.changes?.length || 0;
                     const langWord = langCount === 1 ? 'change' : 'changes';
-                    changesHtml += \`<div style="color:#db6d28;margin-top:4px;font-size:11px">\${escapeHtml(lang.language)} <span style="color:#8b949e">\${langCount} \${langWord}</span></div>\`;
+                    changesHtml += \`<div style="color:#db6d28;margin-top:4px;font-size:0.6875rem">\${escapeHtml(lang.language)} <span style="color:#8b949e">\${langCount} \${langWord}</span></div>\`;
                 }
 
                 for (const c of (lang.changes || [])) {

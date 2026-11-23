@@ -11,7 +11,7 @@ export const widgetsCss = `
     gap: 6px;
     transition: background 0.2s;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
+    font-size: 0.625rem;
     overflow: visible;
 }
 @media (hover: hover) and (pointer: fine) {
@@ -19,7 +19,7 @@ export const widgetsCss = `
 }
 .widgets-header .collapse-btn {
     padding: 2px 6px;
-    font-size: 10px;
+    font-size: 0.625rem;
     flex-shrink: 0;
 }
 .widgets-header-row1 {
@@ -60,7 +60,7 @@ export const widgetsCss = `
     color: var(--text-mid);
 }
 .wh-icon {
-    font-size: 10px;
+    font-size: 0.625rem;
 }
 .wh-value {
     color: var(--text-bright);
@@ -79,7 +79,7 @@ export const widgetsCss = `
 .wh-git .files { color: var(--text-mid); }
 .wh-elapsed {
     color: var(--text-dim);
-    font-size: 9px;
+    font-size: 0.5625rem;
     margin-left: 2px;
 }
 .wh-elapsed:not(:empty)::before {
@@ -101,7 +101,7 @@ export const widgetsCss = `
     background: var(--bg-surface);
     border: 1px solid var(--border-dim);
     border-radius: 4px;
-    font-size: 10px;
+    font-size: 0.625rem;
     color: var(--text-bright);
     white-space: nowrap;
     pointer-events: none;
@@ -131,7 +131,7 @@ export const widgetsCss = `
     background: var(--bg-deep);
     padding: 14px;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
+    font-size: 0.6875rem;
     min-width: 0;
     overflow: hidden;
 }
@@ -139,7 +139,7 @@ export const widgetsCss = `
     color: var(--accent-cyan);
     font-weight: 600;
     margin-bottom: 10px;
-    font-size: 11px;
+    font-size: 0.6875rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -212,7 +212,7 @@ export const widgetsCss = `
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
 }
 .changes-pr-title > :last-child,
@@ -266,7 +266,7 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-size: 10px;
+    font-size: 0.625rem;
 }
 
 .slack-threads {
@@ -281,7 +281,7 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
 }
 .slack-thread,
 .slack-thread-text {
-    font-size: 10px;
+    font-size: 0.625rem;
     line-height: 1.35;
     overflow: hidden;
     text-decoration: none;
@@ -314,7 +314,7 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     .widgets-header {
         padding: 8px 10px;
         gap: 4px;
-        font-size: 9px;
+        font-size: 0.5625rem;
     }
     .widgets-header-row2 {
         gap: 6px;
@@ -339,7 +339,7 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
         display: none;
     }
     .widgets-header-row2 .wh-icon {
-        font-size: 9px;
+        font-size: 0.5625rem;
     }
     .container {
         padding: 10px;
@@ -362,7 +362,7 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
         border-radius: 0 0 7px 7px;
     }
     .terminal {
-        font-size: 10px;
+        font-size: 0.625rem;
         line-height: 1;
         padding: 10px;
     }
@@ -377,7 +377,7 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     }
     .perm-btn {
         padding: 10px 14px;
-        font-size: 11px;
+        font-size: 0.6875rem;
     }
     .perm-hint {
         display: none;
@@ -458,7 +458,7 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     gap: 10px;
     margin-bottom: 6px;
     color: #8b949e;
-    font-size: 10px;
+    font-size: 0.625rem;
     text-transform: none;
     letter-spacing: 0.7px;
 }
@@ -477,7 +477,7 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
 }
 .commit-sha {
     color: #7ee787;
-    font-size: 10px;
+    font-size: 0.625rem;
 }
 .commit-subject {
     color: var(--text-bright);
@@ -488,7 +488,7 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
 }
 .commit-time {
     color: var(--text-dim);
-    font-size: 10px;
+    font-size: 0.625rem;
     white-space: nowrap;
 }
 `;

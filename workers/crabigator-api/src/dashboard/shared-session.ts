@@ -45,7 +45,8 @@ body.shared-dashboard {margin:0; padding:0; height:100vh; height:100dvh; display
 .shared-dashboard .session-header {flex:none; border-radius:0; border-bottom:1px solid var(--border-dim)}
 .shared-dashboard .session-info {max-height:18dvh; overflow:auto}
 .shared-dashboard .session-context {display:flex}
-.shared-dashboard .session-actions {align-self:center; flex-wrap:wrap}
+.shared-dashboard .session-actions {align-self:center; flex-wrap:wrap; min-width:0}
+.shared-dashboard .filter-chip:disabled {opacity:.45; cursor:default}
 .shared-dashboard .filter-chip:active {background:var(--vp-accent-tint)}
 .terminal-toggles {display:inline-flex; align-items:center; padding:2px; gap:2px; background:var(--vp-well); border:1px solid var(--vp-line); border-radius:12px}
 .terminal-toggle {display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:32px; padding:0 9px; border:1px solid transparent; border-radius:9px; background:transparent; color:var(--vp-muted); font:600 12px var(--font-ui); cursor:pointer; transition:background .18s, color .18s, border-color .18s}
@@ -55,11 +56,11 @@ body.shared-dashboard {margin:0; padding:0; height:100vh; height:100dvh; display
 .terminal-toggle[aria-pressed="true"] .toggle-off, .terminal-toggle[aria-pressed="false"] .toggle-on {opacity:0; transform:translateY(-2px)}
 @media (hover:hover) and (pointer:fine) { .terminal-toggle:hover {color:var(--text-bright); border-color:var(--border-glow)} }
 @media (pointer:coarse) { .terminal-toggle {min-height:44px} }
-#share {font-family:'JetBrains Mono',monospace}
-#banner {flex:none; background:#303135; color:var(--accent-peach); border-bottom:1px solid #685344; padding:6px 14px; font-size:12px}
+#share {font:700 .8125rem 'JetBrains Mono',monospace}
+#banner {flex:none; background:#303135; color:var(--accent-peach); border-bottom:1px solid #685344; padding:6px 14px; font-size:.75rem}
 #session-view {display:flex; flex:1; flex-direction:column; min-height:0}
-.terminal.scroll-active {flex:1 1 0; min-height:0; overflow:auto; overscroll-behavior:contain; padding:12px clamp(12px,2vw,30px); border:0; font-size:13px}
-#widgets-view {flex:none}
+.terminal.scroll-active {flex:1 1 0; min-height:0; overflow:auto; overscroll-behavior:contain; padding:12px clamp(12px,2vw,30px); border:0; font-size:.8125rem}
+#widgets-view {flex:none; max-height:65%}
 @media(max-width:720px){.shared-dashboard .session-header{flex-wrap:wrap}.shared-dashboard .session-info{flex:1 1 100%}.shared-dashboard .session-actions{gap:5px}}
 </style></head><body class="container shared-dashboard">
 <div id="banner" role="status" hidden></div>
@@ -69,8 +70,8 @@ body.shared-dashboard {margin:0; padding:0; height:100vh; height:100dvh; display
 </div></header>
 <section class="session-header" aria-label="Session">
 <div class="session-info" id="shared-heading"></div>
-<div class="session-actions" role="toolbar" aria-label="Terminal display">
-<button class="filter-chip" id="smaller" aria-label="Decrease font size">A−</button><button class="filter-chip" id="larger" aria-label="Increase font size">A+</button>
+<div class="session-actions" role="toolbar" aria-label="Session display">
+<button class="filter-chip" id="smaller" aria-label="Decrease session text size">A−</button><button class="filter-chip" id="larger" aria-label="Increase session text size">A+</button>
 <div class="terminal-toggles">
 <button type="button" class="terminal-toggle" id="wrap" aria-pressed="true" aria-controls="terminal-view" title="Wrap long lines to fit the terminal">${iconWrap}Wrap</button>
 <button type="button" class="terminal-toggle" id="pin" aria-pressed="true" aria-controls="terminal-view" title="Keep the latest terminal output in view">${iconFollow}Follow</button>
@@ -111,8 +112,17 @@ el('pin').onclick = () => {
 el('wrap').onclick = () => preserveTerminalScroll('view', () => {
     el('wrap').setAttribute('aria-pressed', !terminal.classList.toggle('scroll-mode'));
 });
+// Session text uses rem so a single adjustment also reaches newly streamed rows.
+const defaultTextSize = 13;
+let textSize = defaultTextSize;
 for (const [id, step] of [['smaller', -1], ['larger', 1]]) el(id).onclick = () => {
-    preserveTerminalScroll('view', () => { terminal.style.fontSize = Math.max(9, Math.min(28, parseFloat(getComputedStyle(terminal).fontSize) + step)) + 'px'; });
+    textSize = Math.max(9, Math.min(28, textSize + step));
+    preserveTerminalScroll('view', () => {
+        document.documentElement.style.fontSize = (100 * textSize / defaultTextSize) + '%';
+        fitSummaryAges('view');
+    });
+    el('smaller').disabled = textSize === 9;
+    el('larger').disabled = textSize === 28;
 };
 let shortId = '';
 el('share').onclick = async () => {

@@ -46,7 +46,7 @@ export const sessionCardCss = `
 }
 .session-header .title {
     font-family: var(--font-ui);
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 600;
     color: var(--accent-cyan);
     flex: 1;
@@ -60,7 +60,7 @@ export const sessionCardCss = `
 }
 .session-header .generated-title {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
+    font-size: 0.6875rem;
     color: #58a6ff;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -69,7 +69,7 @@ export const sessionCardCss = `
 .session-header .generated-title:empty { display: none; }
 .session-header .cwd {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
+    font-size: 0.6875rem;
     color: var(--text-dim);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -89,7 +89,7 @@ export const sessionCardCss = `
     font-family: var(--font-ui);
     padding: 3px 8px;
     border-radius: 4px;
-    font-size: 10px;
+    font-size: 0.625rem;
     font-weight: 600;
     text-transform: none;
     letter-spacing: 0;

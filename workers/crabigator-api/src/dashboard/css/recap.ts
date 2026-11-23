@@ -46,7 +46,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     align-items: center;
     gap: 6px;
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: 0.625rem;
     text-transform: none;
     letter-spacing: 0;
     white-space: nowrap;
@@ -66,7 +66,7 @@ body.hide-section-prs .session-prs { display: none !important; }
 .session-recap-headline {
     grid-area: headline;
     color: var(--text-bright);
-    font-size: 13px;
+    font-size: 0.8125rem;
     line-height: 1.4;
     font-weight: 500;
     /* The headline can wrap to two lines before the card itself caps height. */
@@ -87,7 +87,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     flex-direction: column;
     gap: 2px;
     color: var(--text-mid);
-    font-size: 11.5px;
+    font-size: 0.71875rem;
     line-height: 1.4;
     overflow: hidden;
 }
@@ -120,7 +120,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     grid-area: meta;
     align-self: start;
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: 0.625rem;
     color: var(--text-dim);
     white-space: nowrap;
 }
@@ -134,12 +134,12 @@ body.hide-section-prs .session-prs { display: none !important; }
     padding: 12px 16px 14px;
     background: var(--bg-card);
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 0.6875rem;
 }
 .recap-history-widget .widget-title { display: flex; justify-content: space-between; align-items: baseline; }
 .recap-history-widget .recap-history-count {
     color: var(--text-dim);
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-family: var(--font-ui);
 }
 .recap-history-widget .recaps-list {
@@ -159,14 +159,14 @@ body.hide-section-prs .session-prs { display: none !important; }
 }
 .recap-history-widget .rh-headline {
     color: var(--text-bright);
-    font-size: 12px;
+    font-size: 0.75rem;
     line-height: 1.4;
     margin-bottom: 4px;
     word-break: break-word;
 }
 .recap-history-widget .rh-bullet {
     color: var(--text-mid);
-    font-size: 11px;
+    font-size: 0.6875rem;
     line-height: 1.4;
     padding-left: 10px;
     position: relative;
@@ -182,7 +182,7 @@ body.hide-section-prs .session-prs { display: none !important; }
 .recap-history-widget .rh-delta {
     margin-top: 4px;
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: 0.625rem;
     color: var(--text-dim);
 }
 .recap-history-widget .rh-delta .rd-add { color: var(--accent-green); }
@@ -221,7 +221,7 @@ body.hide-section-prs .session-prs { display: none !important; }
    anything, so a tap near the title can't land on a PR row's controls. */
 .session-prs .pr-list-title {
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: 0.625rem;
     text-transform: none;
     letter-spacing: 0;
     color: #c4a7f7;
@@ -239,7 +239,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     display: inline-block;
     width: 12px;
     color: #a371f7;
-    font-size: 9px;
+    font-size: 0.5625rem;
 }
 .session-prs .pr-list-count {
     color: var(--text-dim);
@@ -277,7 +277,7 @@ body.hide-section-prs .session-prs { display: none !important; }
 }
 .session-prs .pr-badge {
     font-family: var(--font-ui);
-    font-size: 9px;
+    font-size: 0.5625rem;
     text-transform: none;
     letter-spacing: 0;
     font-weight: 700;
@@ -289,7 +289,7 @@ body.hide-section-prs .session-prs { display: none !important; }
 /* Primary/secondary toggle: ★ purple for the PR being worked on, ☆ gray for
    the rest. Click flips the disposition for the whole device group. */
 .session-prs .pr-star {
-    font-size: 12px;
+    font-size: 0.75rem;
     color: #c4a7f7;
     flex: 0 0 auto;
     user-select: none;
@@ -302,7 +302,7 @@ body.hide-section-prs .session-prs { display: none !important; }
 /* Promote/demote (↑/↓) flips primary and secondary; dismiss (✕) removes the
    PR from every list in the group. */
 .session-prs .pr-flip, .session-prs .pr-dismiss {
-    font-size: 10px;
+    font-size: 0.625rem;
     color: #6e7681;
     opacity: 0.55;
     cursor: pointer;
@@ -316,7 +316,7 @@ body.hide-section-prs .session-prs { display: none !important; }
 }
 .session-prs .pr-link {
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     color: #c4a7f7;
     text-decoration: none;
@@ -332,7 +332,7 @@ body.hide-section-prs .session-prs { display: none !important; }
 }
 .session-prs .pr-diff {
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: 0.625rem;
     margin-left: auto;
     white-space: nowrap;
     text-decoration: none;
@@ -362,7 +362,7 @@ a.pr-comments:hover { text-decoration: underline; }
 .session-prs .pr-review,
 .session-prs .pr-merge {
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: 0.625rem;
     font-weight: 600;
     white-space: nowrap;
     text-decoration: none;
@@ -384,7 +384,7 @@ a.pr-comments:hover { text-decoration: underline; }
 .session-prs .pr-review.waiting { color: #6e7681; }
 .session-prs .pr-title {
     color: var(--text-mid);
-    font-size: 11.5px;
+    font-size: 0.71875rem;
     line-height: 1.35;
     word-break: break-word;
     display: -webkit-box;
@@ -399,7 +399,7 @@ a.pr-comments:hover { text-decoration: underline; }
 }
 .session-prs .pr-branch {
     font-family: var(--font-ui);
-    font-size: 10px;
+    font-size: 0.625rem;
     color: var(--text-dim);
     white-space: nowrap;
     overflow: hidden;
