@@ -239,37 +239,38 @@ pub fn draw_stats_widget(
 ///
 /// No leading space — the widget wrapper applies a uniform 1-col left margin,
 /// so an extra space here would push the label in by 2 cols instead of 1.
-fn format_cloud_header(cloud_status: Option<&CloudStatus>, is_paired: bool) -> String {
-    match cloud_status {
+fn format_cloud_header(
+    cloud_status: Option<&CloudStatus>,
+    is_paired: bool,
+    available: usize,
+) -> String {
+    let (label, tint) = match cloud_status {
         Some(status) if status.connected => {
-            if is_paired {
-                // In debug builds, show first 8 chars of session ID
-                #[cfg(debug_assertions)]
-                if let Some(ref session_id) = status.session_id {
-                    let short_id = &session_id[..8.min(session_id.len())];
-                    return format!(
-                        "{}Streaming {}{}{}",
-                        fg(color::GREEN),
-                        fg(color::CYAN),
-                        short_id,
-                        RESET
-                    );
-                }
-                format!("{}Streaming{}", fg(color::GREEN), RESET)
+            let (label, tint) = if is_paired {
+                ("Streaming", color::GREEN)
             } else {
-                format!("{}Waiting to pair{}", fg(color::YELLOW), RESET)
+                ("Waiting to pair", color::YELLOW)
+            };
+            if let Some(id) = &status.session_id {
+                let short: String = id.chars().take(8).collect();
+                let linked = match &status.share_url {
+                    Some(url) => escape::hyperlink(url.as_str(), &short),
+                    None => short.clone(),
+                };
+                let prefix = if label.len() + 1 + short.len() <= available {
+                    format!("{}{label} ", fg(tint))
+                } else {
+                    String::new()
+                };
+                return format!("{prefix}{}{linked}{RESET}", fg(color::CYAN));
             }
+            (label, tint)
         }
-        Some(status) if status.reconnect_attempts > 0 => {
-            format!("{}Retry{}", fg(color::ORANGE), RESET)
-        }
-        Some(_) => {
-            format!("{}Offline{}", fg(color::RED), RESET)
-        }
-        None => {
-            format!("{}Local{}", fg(color::GRAY), RESET)
-        }
-    }
+        Some(status) if status.reconnect_attempts > 0 => ("Retry", color::ORANGE),
+        Some(_) => ("Offline", color::RED),
+        None => ("Local", color::GRAY),
+    };
+    format!("{}{label}{RESET}", fg(tint))
 }
 
 /// Build the dim "· <pair-text>" suffix shown next to the streaming label.
@@ -334,30 +335,41 @@ fn build_pair_suffix(code: &str, available: usize) -> Option<(usize, String)> {
     Some(make(truncated, truncated_width))
 }
 
-/// Build the full left-side header content: cloud status + optional pair-code
-/// suffix sized to whatever room is left between the cloud label and the
-/// right-aligned state indicator (with 2 cols of breathing room reserved).
-fn build_header_left(
+/// Keep the public session link and the state visible as the column narrows.
+fn stats_header(
     cloud_status: Option<&CloudStatus>,
     is_paired: bool,
     pairing_code: Option<&str>,
     width: usize,
-    state_width: usize,
-) -> (usize, String) {
-    let cloud = format_cloud_header(cloud_status, is_paired);
-    let cloud_width = strip_ansi_len(&cloud);
-    let Some(code) = pairing_code else {
-        return (cloud_width, cloud);
-    };
-    let available_for_pair = width
-        .saturating_sub(cloud_width)
-        .saturating_sub(state_width)
-        .saturating_sub(2);
-    if let Some((pair_width, pair_text)) = build_pair_suffix(code, available_for_pair) {
-        (cloud_width + pair_width, format!("{}{}", cloud, pair_text))
-    } else {
-        (cloud_width, cloud)
+    state: SessionState,
+    state_tint: Option<Tint>,
+) -> String {
+    let mut indicator = format_state_indicator(state, state_tint);
+    let mut state_width = strip_ansi_len(&indicator);
+    let mut header = format_cloud_header(
+        cloud_status,
+        is_paired,
+        width.saturating_sub(state_width + 1),
+    );
+    let header_width = strip_ansi_len(&header);
+    if header_width + state_width > width {
+        indicator = session_state_icon(state, throbber_frame_index());
+        state_width = 1;
     }
+    if header_width > width {
+        return if width > 0 { indicator } else { String::new() };
+    }
+    if header_width == width {
+        return header;
+    }
+    let mut gap = width - header_width - state_width;
+    if let Some((length, suffix)) =
+        pairing_code.and_then(|code| build_pair_suffix(code, gap.saturating_sub(2)))
+    {
+        header.push_str(&suffix);
+        gap -= length;
+    }
+    format!("{header}{:gap$}{indicator}", "")
 }
 
 fn compact_metric_cell(labels: &[String], value: &str, width: usize) -> String {
@@ -535,20 +547,14 @@ fn draw_compact_row(
     let right_width = content_width.saturating_sub(left_width);
 
     match row {
-        1 => {
-            // Header: cloud status (+ optional pair code) on left, state on right
-            let state = format_state_indicator(stats.effective_state(), state_tint);
-            let state_len = strip_ansi_len(&state);
-            let (header_len, header) = build_header_left(
-                cloud_status,
-                is_paired,
-                pairing_code,
-                width as usize,
-                state_len,
-            );
-            let gap = (width as usize).saturating_sub(header_len + state_len);
-            format!("{}{:gap$}{}", header, "", state, gap = gap)
-        }
+        1 => stats_header(
+            cloud_status,
+            is_paired,
+            pairing_code,
+            width as usize,
+            stats.effective_state(),
+            state_tint,
+        ),
         2 => {
             let session_value = format!("{}{}{}", fg(color::BLUE), stats.format_work(), RESET);
             let session =
@@ -720,20 +726,14 @@ fn draw_normal_row(
     secondary_attached: bool,
 ) -> String {
     match row {
-        1 => {
-            // Header: cloud status (+ optional pair code) on left, state on right
-            let state = format_state_indicator(stats.effective_state(), state_tint);
-            let state_len = strip_ansi_len(&state);
-            let (header_len, header) = build_header_left(
-                cloud_status,
-                is_paired,
-                pairing_code,
-                width as usize,
-                state_len,
-            );
-            let gap = (width as usize).saturating_sub(header_len + state_len);
-            format!("{}{:gap$}{}", header, "", state, gap = gap)
-        }
+        1 => stats_header(
+            cloud_status,
+            is_paired,
+            pairing_code,
+            width as usize,
+            stats.effective_state(),
+            state_tint,
+        ),
         2 => {
             // Session/work time. The identity chip sits just left of the word.
             // A connected attach view adds an amber "secondary" chip beside
@@ -850,6 +850,35 @@ mod tests {
         let start = s.find("\x1b]8;;")? + "\x1b]8;;".len();
         let end = s[start..].find('\x07')? + start;
         Some(s[start..end].to_string())
+    }
+
+    #[test]
+    fn streaming_id_keeps_its_link_as_the_stats_column_narrows() {
+        let target = "https://example.org/share/7a84ecfd-eeb8-43e5-a2b4-36119c93994a";
+        let status = CloudStatus {
+            connected: true,
+            reconnect_attempts: 0,
+            _backoff_secs: 0,
+            _queue_len: 0,
+            session_id: Some("01234567-89ab-cdef".into()),
+            share_url: Some(target.parse().unwrap()),
+        };
+        for width in 0..50 {
+            let header = stats_header(
+                Some(&status),
+                true,
+                None,
+                width,
+                SessionState::Interrupted,
+                None,
+            );
+            assert!(visible(&header) <= width);
+            if width >= 8 {
+                assert!(header.contains("01234567"));
+                assert!(!header.contains("89ab"));
+                assert_eq!(osc_link_target(&header).as_deref(), Some(target));
+            }
+        }
     }
 
     #[test]

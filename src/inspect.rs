@@ -112,7 +112,8 @@ fn print_history(instances: &[(PathBuf, Value)]) -> Result<()> {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
-        println!("\n=== Session {} ===", session_id);
+        let display_id = data["cloud_session_id"].as_str().unwrap_or(session_id);
+        println!("\n=== Session {:.8} ===", display_id);
         println!("Directory: {}", cwd);
 
         // Load stats file to get event history
@@ -252,7 +253,7 @@ fn print_pretty(instances: &[(PathBuf, Value)]) -> Result<()> {
         return Ok(());
     }
 
-    for (path, data) in instances {
+    for (_path, data) in instances {
         let session_id = data
             .get("session_id")
             .and_then(|v| v.as_str())
@@ -262,9 +263,10 @@ fn print_pretty(instances: &[(PathBuf, Value)]) -> Result<()> {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
-        println!("\n=== Session {} ===", session_id);
+        let display_id = data["cloud_session_id"].as_str().unwrap_or(session_id);
+        println!("\n=== Session {:.8} ===", display_id);
         println!("Directory: {}", cwd);
-        println!("Mirror: {}", path.display());
+        println!("Mirror: /tmp/crabigator-{:.8}*/inspect.json", display_id);
 
         // Show launch timing
         if let Some(timing) = data.get("launch_timing") {

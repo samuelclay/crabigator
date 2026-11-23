@@ -95,6 +95,9 @@ The same status bar and apps work with [Codex](https://github.com/openai/codex),
 
 <p align="center"><b>Every session in a browser tab.</b> Nothing to install: open the <a href="https://drinkcrabigator.com/dashboard">dashboard</a>.</p>
 
+Click the eight-character session ID beside **Streaming** in the terminal, or open **ⓘ** on a dashboard session and click its ID. This opens a public, read-only view. Copy the address to share that session. The same link keeps its terminal history and details after the session ends.
+
+
 Sessions from all your computers show up together, each computer with its own name and color. If the connection drops, events wait on your computer and send when it returns.
 
 ## More in every session

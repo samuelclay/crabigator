@@ -52,7 +52,7 @@ pub fn print_session_banner(session_id: &str, platform: PlatformKind, cols: u16)
     // Only show session directory in debug builds
     #[cfg(debug_assertions)]
     {
-        let session_dir = format!("/tmp/crabigator-{}/", session_id);
+        let session_dir = format!("/tmp/crabigator-{:.8}*/", session_id);
         println!("    {FG_PURPLE}Session{RESET}  {DIM}{session_dir}{RESET}");
     }
 

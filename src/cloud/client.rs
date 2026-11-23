@@ -277,6 +277,7 @@ fn parse_pr_disposition(value: &str) -> Option<PrDisposition> {
 struct CreateSessionResponse {
     id: String,
     ws_url: String,
+    share_url: Option<reqwest::Url>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -336,10 +337,8 @@ pub struct CloudStatus {
     pub _backoff_secs: u64,
     /// Number of queued events waiting to be sent
     pub _queue_len: usize,
-    /// Session ID — only read by the debug-build "Streaming <id>" header,
-    /// so release builds see it as dead.
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub session_id: Option<String>,
+    pub share_url: Option<reqwest::Url>,
 }
 
 /// Cloud client for session streaming
@@ -348,6 +347,7 @@ pub struct CloudClient {
     device: DeviceIdentity,
     /// Cloud session ID (assigned after registration)
     session_id: Option<String>,
+    share_url: Option<reqwest::Url>,
     /// WebSocket URL for reconnection
     ws_url: Option<String>,
     /// WebSocket handle for bidirectional communication
@@ -401,6 +401,7 @@ impl CloudClient {
         Ok(Self {
             device,
             session_id: None,
+            share_url: None,
             ws_url: None,
             ws_handle: None,
             queue,
@@ -478,6 +479,7 @@ impl CloudClient {
             _backoff_secs: self.reconnect_backoff_secs,
             _queue_len: self.queue.len(),
             session_id: self.session_id.clone(),
+            share_url: self.share_url.clone(),
         }
     }
 
@@ -583,6 +585,10 @@ impl CloudClient {
 
         let data: CreateSessionResponse = response.json().await?;
         self.session_id = Some(data.id.clone());
+        self.share_url = data.share_url.filter(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.origin().ascii_serialization() == self.api_url.trim_end_matches("/api")
+        });
         crate::cli::profile_mark("cloud: session registered");
 
         // Connect WebSocket

@@ -1368,9 +1368,16 @@ impl App {
             }
         }
 
-        // Flush final stats + mark session ended in cloud
+        // Publish the final frame, pending rows and modules before marking the session ended.
         if self.cloud_client.is_some() {
             self.session_stats.tick();
+            if let Ok(Some(update)) = self.capture_manager.update_scrollback() {
+                self.send_cloud_scrollback_event(update);
+            }
+            if let Ok(screen) = self.capture_manager.update_screen(self.platform_pty.screen()) {
+                self.send_cloud_screen_event(screen);
+            }
+            self.send_cloud_git_changes_events();
             self.send_cloud_stats_event();
             if let Some(ref client) = self.cloud_client {
                 let _ = client
@@ -2072,13 +2079,9 @@ impl App {
             }
         }
 
-        if self.cloud_viewers_active {
-            if let Ok(Some(update)) = self.capture_manager.maybe_update_scrollback() {
-                self.send_cloud_scrollback_event(update);
-            }
-        } else {
-            // Still capture locally, just don't send to cloud
-            let _ = self.capture_manager.maybe_update_scrollback();
+        // Keep shared history readable even when nobody was watching the session.
+        if let Ok(Some(update)) = self.capture_manager.maybe_update_scrollback() {
+            self.send_cloud_scrollback_event(update);
         }
 
         Ok(cwd_changed)
