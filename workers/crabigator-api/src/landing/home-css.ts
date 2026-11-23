@@ -101,8 +101,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .section { max-width: 1296px; margin: 0 auto; padding: 100px 48px; }
 .section h2 { font-size: clamp(32px, 3.4vw, 48px); line-height: 1.14; letter-spacing: -.045em; font-weight: 450; }
 .section h2 > span { display: block; color: #7f8e99; }
-.antigravity-start { max-width: 660px; margin: 28px auto 0; }
-.antigravity-start p { margin: 0 0 20px; color: var(--muted); overflow-wrap: anywhere; }
 .agent > h2, .surfaces > h2, .ownership > h2, .extras > h2 { text-align: center; }
 .agent { padding-top: 70px; padding-bottom: 70px; }
 .device-pair.agent-pair { position: relative; display: flex; align-items: flex-end; justify-content: space-between; margin-top: 52px; }
@@ -161,6 +159,9 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .card-mcp .mcp-jk { color: #a9d7e9; }.card-mcp .mcp-js { color: #a4d6b6; }.card-mcp .mcp-jb { color: #ffb98a; }
 .card p a { color: var(--peach); }
 .install { display: grid; grid-template-columns: 1fr 1.1fr; gap: 80px; border-top: 1px solid var(--line); }
+.antigravity-start { margin-top: 24px; font-size: 14px; }
+.antigravity-start summary { cursor: pointer; }
+.antigravity-start p { margin: 12px 0; color: var(--muted); overflow-wrap: anywhere; }
 .install-command { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--surface); padding: 20px; border-radius: 6px; }
 .install-command code { overflow-wrap: anywhere; }
 .install-command button { background: transparent; color: var(--ink); border: 0; padding: 6px; }

@@ -53,9 +53,8 @@ export const landingHtml = `<!DOCTYPE html>
     <header class="site-header">
         <a class="wordmark" href="/" aria-label="Crabigator home">${iconCrabigatorLogo}</a>
         <nav aria-label="Main navigation">
-            <a href="#claude-code">Claude Code</a>
-            <a href="#codex">Codex</a>
-            <a href="#antigravity">Antigravity</a>
+            <a href="#claude-code">How it works</a>
+            <a href="#codex">Supported agents</a>
             <a href="#apps">Apps</a>
             <a href="#install">Install</a>
             <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener">GitHub</a>
@@ -95,7 +94,7 @@ export const landingHtml = `<!DOCTYPE html>
         </div>
 
         <section class="section agent" id="claude-code" aria-labelledby="claude-code-title">
-            <h2 id="claude-code-title">Claude Code, unchanged.<span>Crabigator wraps claude, so you’re always up to date.</span></h2>
+            <h2 id="claude-code-title">Your agent, unchanged.<span>Crabigator wraps your installed CLI. Update it as usual, and your next session uses the new version.</span></h2>
             ${devicePairHtml({
                 capture: claudeCapture, command: 'claude', title: 'Fire scene night look',
                 label: 'Claude Code at work in Crabigator, editing the fire scene, with a moving train scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive and the same train scene.',
@@ -103,22 +102,11 @@ export const landingHtml = `<!DOCTYPE html>
         </section>
 
         <section class="section agent" id="codex" aria-labelledby="codex-title">
-            <h2 id="codex-title">Codex, too.<span>Crabigator also wraps opencode and Grok Build.</span></h2>
+            <h2 id="codex-title">Start in your terminal. Follow along on your phone.<span>Works with Claude, Codex, OpenCode, Grok Build, and Gemini Antigravity.</span></h2>
             ${devicePairHtml({
                 capture: codexCapture, command: 'codex', title: 'Add scene-name uniqueness test', reverse: true,
                 label: 'Codex at work in Crabigator, adding a test, with a moving surf scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive and the same surf scene.',
             })}
-        </section>
-
-        <section class="section agent" id="antigravity" aria-labelledby="antigravity-title">
-            <h2 id="antigravity-title">Google Antigravity<span>Run Gemini 4 Neon in your terminal.</span></h2>
-            <div class="antigravity-start">
-                <p>Install <a href="https://antigravity.google/docs/cli/tutorial/">Antigravity CLI</a> and sign in with <code>agy</code>. For Antigravity support, install Crabigator from <a href="https://github.com/samuelclay/crabigator">the main branch</a> with <code>cargo install --git https://github.com/samuelclay/crabigator --locked</code>.</p>
-                <div class="install-command">
-                    <code id="antigravity-command">crabigator antigravity --model gemini-4-neon-high</code>
-                    <button type="button" data-copy-target="antigravity-command" aria-label="Copy Antigravity command">${iconCopy}</button>
-                </div>
-            </div>
         </section>
 
         <section class="section surfaces" id="apps" aria-labelledby="surfaces-title">
@@ -165,6 +153,14 @@ ${cardsHtml}
                     <li>Run <code>crabigator</code>, <code>crabigator codex</code>, <code>crabigator opencode</code>, or <code>crabigator grok</code>.</li>
                     <li>Open the pairing link on your phone.</li>
                 </ol>
+                <details class="antigravity-start">
+                    <summary>Set up Antigravity CLI</summary>
+                    <p id="antigravity">Install <a href="https://antigravity.google/docs/cli/tutorial/">Antigravity CLI</a> and sign in with <code>agy</code>. For Antigravity support, use Cargo in place of the npm command above. Install Crabigator from <a href="https://github.com/samuelclay/crabigator">the main branch</a> with <code>cargo install --git https://github.com/samuelclay/crabigator --locked</code>.</p>
+                    <div class="install-command">
+                        <code id="antigravity-command">crabigator antigravity --model gemini-4-neon-high</code>
+                        <button type="button" data-copy-target="antigravity-command" aria-label="Copy Antigravity command">${iconCopy}</button>
+                    </div>
+                </details>
             </div>
         </section>
         <section class="section updates" id="mobile">
