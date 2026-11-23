@@ -370,6 +370,10 @@ impl CaptureManager {
             PlatformKind::Opencode => {
                 opencode_transcript::read_transcript(transcript_path, self.transcript_offset)?
             }
+            PlatformKind::Antigravity => crate::platforms::antigravity::read_transcript(
+                transcript_path,
+                self.transcript_offset,
+            )?,
             PlatformKind::Grok => grok_transcript::read_transcript(
                 transcript_path,
                 self.transcript_offset,

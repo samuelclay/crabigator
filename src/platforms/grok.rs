@@ -303,7 +303,7 @@ impl Platform for GrokPlatform {
                 });
             if let Some(id) = session_id {
                 if state.linked_session.as_ref() != Some(&id) {
-                    link_session_dir(&id);
+                    super::link_session_dir(&id);
                     state.linked_session = Some(id);
                 }
             }
@@ -500,26 +500,6 @@ fn consume_jsonl(path: &Path, offset: u64, state: &mut EventState) -> u64 {
         }
     }
     current
-}
-
-fn link_session_dir(grok_session: &str) {
-    #[cfg(not(unix))]
-    let _ = grok_session;
-    #[cfg(unix)]
-    {
-        let Ok(session_id) = std::env::var("CRABIGATOR_SESSION_ID") else {
-            return;
-        };
-        if session_id.is_empty() || grok_session.is_empty() {
-            return;
-        }
-        let target = PathBuf::from(format!("/tmp/crabigator-{session_id}"));
-        let link = PathBuf::from(format!("/tmp/crabigator-{grok_session}"));
-        if !target.is_dir() || link.exists() {
-            return;
-        }
-        let _ = std::os::unix::fs::symlink(&target, &link);
-    }
 }
 
 #[cfg(test)]

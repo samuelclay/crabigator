@@ -233,14 +233,14 @@ fn require_platform(value: &str) -> PlatformKind {
     match PlatformKind::parse(value) {
         Some(kind) => kind,
         None => {
-            eprintln!("Unknown platform: {value}. Use 'claude', 'codex', 'opencode', or 'grok'.");
+            eprintln!("Unknown platform: {value}. Use 'claude', 'codex', 'opencode', 'grok', or 'antigravity'.");
             std::process::exit(1);
         }
     }
 }
 
 fn spawn_usage_error() -> ! {
-    eprintln!("Usage: crabigator spawn [--cwd <dir>] [claude|codex|opencode|grok]");
+    eprintln!("Usage: crabigator spawn [--cwd <dir>] [claude|codex|opencode|grok|antigravity]");
     std::process::exit(1);
 }
 

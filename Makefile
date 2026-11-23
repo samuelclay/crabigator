@@ -1,4 +1,4 @@
-.PHONY: announce-release run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo opencode grok grok-yolo pr prs reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux portability-check flow-reference
+.PHONY: announce-release run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo opencode antigravity grok grok-yolo pr prs reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux portability-check flow-reference
 
 PROVIDER_FILE := .crabigator-provider
 DEFAULT_PROVIDER := claude
@@ -45,6 +45,10 @@ claude:
 
 opencode:
 	@echo "opencode" > $(PROVIDER_FILE)
+	@$(MAKE) run
+
+antigravity:
+	@echo "antigravity" > $(PROVIDER_FILE)
 	@$(MAKE) run
 
 grok:

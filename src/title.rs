@@ -21,6 +21,7 @@ pub(crate) const fn provider_title_marker(platform: PlatformKind) -> &'static st
         PlatformKind::Codex => CODEX_TITLE_MARKER,
         PlatformKind::Opencode => OPENCODE_TITLE_MARKER,
         PlatformKind::Grok => GROK_TITLE_MARKER,
+        PlatformKind::Antigravity => "✧  ",
     }
 }
 
@@ -60,6 +61,8 @@ pub(crate) fn strip_provider_title_marker(title: &str) -> &str {
         "↯ ",
         "✦  ",
         "✦ ",
+        "✧  ",
+        "✧ ",
     ] {
         if let Some(title) = title.strip_prefix(marker) {
             return title;
@@ -75,6 +78,7 @@ pub(crate) fn marked_title_platform(title: &str) -> Option<PlatformKind> {
         PlatformKind::Claude,
         PlatformKind::Grok,
         PlatformKind::Opencode,
+        PlatformKind::Antigravity,
     ]
     .into_iter()
     .find(|platform| title.starts_with(provider_title_marker(*platform).trim_end()))
@@ -91,8 +95,9 @@ pub(crate) fn combined_provider_title_marker(
         PlatformKind::Codex,
         PlatformKind::Grok,
         PlatformKind::Opencode,
+        PlatformKind::Antigravity,
     ];
-    let mut seen = [false; 4];
+    let mut seen = [false; 5];
     for platform in platforms {
         if let Some(index) = order.iter().position(|item| *item == platform) {
             seen[index] = true;
@@ -139,7 +144,7 @@ pub(crate) fn display_title(
         // opencode titles its sessions natively. Grok's OSC title is a live
         // status line (`Running: grep - prompt - grok`); keep the prompt,
         // not the status prefix, so the dashboard card does not bounce.
-        PlatformKind::Opencode => native_title.or(recap_title),
+        PlatformKind::Opencode | PlatformKind::Antigravity => native_title.or(recap_title),
         PlatformKind::Grok => grok_stable_osc_title(native_title).or(recap_title),
     };
     title.map(|title| mark_provider_title(platform, title))

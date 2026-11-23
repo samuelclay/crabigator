@@ -117,7 +117,7 @@ fn encode_remote_answer(text: &str, platform: PlatformKind) -> Vec<u8> {
         // Explicit paste boundaries bypass Codex's timing-based paste detection,
         // which otherwise turns the following Enter into another newline.
         // Claude can drop the prefix when a long answer arrives as raw keys.
-        PlatformKind::Claude | PlatformKind::Codex => [
+        PlatformKind::Claude | PlatformKind::Codex | PlatformKind::Antigravity => [
             escape::BRACKETED_PASTE_START,
             text.as_bytes(),
             escape::BRACKETED_PASTE_END,
@@ -1918,7 +1918,9 @@ impl App {
             // stomp Plan / Always-approve with Normal.
             if !matches!(
                 self.platform.kind(),
-                crate::platforms::PlatformKind::Opencode | crate::platforms::PlatformKind::Grok
+                crate::platforms::PlatformKind::Opencode
+                    | crate::platforms::PlatformKind::Grok
+                    | crate::platforms::PlatformKind::Antigravity
             ) {
                 let new_mode = crate::mode::detect_mode(&screen);
                 if new_mode != self.session_stats.platform_stats.mode {
@@ -2676,7 +2678,12 @@ impl App {
             let plain_title = crate::title::strip_provider_title_marker(&title);
             let is_default = matches!(
                 plain_title,
-                "Claude Code" | "Codex CLI" | "Grok" | "Grok Build"
+                "Claude Code"
+                    | "Codex CLI"
+                    | "Grok"
+                    | "Grok Build"
+                    | "Antigravity"
+                    | "Antigravity CLI"
             );
             if !is_default && !self.title_history.contains(&title) {
                 self.title_history.push(title.clone());

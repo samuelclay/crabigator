@@ -878,6 +878,7 @@ fn mirror_platform(data: &serde_json::Value) -> PlatformKind {
                 .find_map(|component| match component {
                     ".codex" => Some(PlatformKind::Codex),
                     ".claude" => Some(PlatformKind::Claude),
+                    "antigravity-cli" => Some(PlatformKind::Antigravity),
                     ".grok" => Some(PlatformKind::Grok),
                     ".opencode" => Some(PlatformKind::Opencode),
                     _ => None,
@@ -4623,6 +4624,7 @@ fn new_session_platform(key: char) -> Option<PlatformKind> {
         'c' | 'C' | '1' => Some(PlatformKind::Claude),
         'x' | 'X' | '2' => Some(PlatformKind::Codex),
         'o' | 'O' | '3' => Some(PlatformKind::Opencode),
+        'a' | 'A' | '5' => Some(PlatformKind::Antigravity),
         'g' | 'G' | '4' => Some(PlatformKind::Grok),
         _ => None,
     }
@@ -4738,14 +4740,14 @@ fn start_checkout_spawn(
 /// before Ghostty opens. A narrow terminal keeps the keys and shortens the path.
 fn new_session_banner(label: &str, width: u16) -> String {
     let width = width as usize;
-    let keys = " · c Claude · x Codex · o opencode · g Grok · Esc cancels ";
+    let keys = " · c Claude · x Codex · o opencode · g Grok · a Antigravity · Esc cancels ";
     let prefix = " ◉ new session in ";
     let room = width.saturating_sub(prefix.width() + keys.width());
     let text = if room >= 4 {
         let label = crate::ui::pr_cells::truncate_to_width(label, room);
         format!("{prefix}{label}{keys}")
     } else {
-        " ◉ c Claude · x Codex · o opencode · g Grok · Esc cancels ".to_string()
+        " ◉ c Claude · x Codex · o opencode · g Grok · a Antigravity · Esc cancels ".to_string()
     };
     let text = crate::ui::pr_cells::truncate_to_width(&text, width);
     let pad = width.saturating_sub(text.width());

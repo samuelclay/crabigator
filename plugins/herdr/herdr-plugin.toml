@@ -38,6 +38,12 @@ title = "Start Crabigator (Grok)"
 contexts = ["workspace"]
 command = ["sh", "start.sh", "grok"]
 
+[[actions]]
+id = "start-antigravity"
+title = "Start Crabigator (Antigravity)"
+contexts = ["workspace"]
+command = ["sh", "start.sh", "antigravity"]
+
 [[panes]]
 id = "prs"
 title = "Crabigator PRs"

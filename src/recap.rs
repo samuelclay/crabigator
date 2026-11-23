@@ -607,7 +607,7 @@ fn generate_turn_recap(job: RecapJob) -> Result<Option<TurnRecap>> {
     parse_recap_response(&job, &response, &slack_threads).map(Some)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct TurnTranscript {
     pub(crate) user_prompt: Option<String>,
     pub(crate) activity: String,
@@ -784,6 +784,9 @@ fn tracking_turns(
             PlatformKind::Opencode if entry["kind"] == "user" => {
                 entry["text"].as_str().map(str::to_string)
             }
+            PlatformKind::Antigravity => {
+                crate::platforms::antigravity::user_prompt(&entry).map(str::to_owned)
+            }
             PlatformKind::Grok => grok_acp::update_from_line(&entry)
                 .filter(|update| update["sessionUpdate"] == "user_message_chunk")
                 .map(|update| grok_acp::text_content(update).to_string()),
@@ -792,6 +795,7 @@ fn tracking_turns(
         if prompt.is_some_and(|prompt| !prompt.trim().is_empty()) {
             let timestamp = entry
                 .get("timestamp")
+                .or_else(|| entry.get("created_at"))
                 .or_else(|| payload.get("timestamp"))
                 .and_then(Value::as_str)
                 .and_then(|stamp| chrono::DateTime::parse_from_rfc3339(stamp).ok())
@@ -916,6 +920,7 @@ fn finish_latest_turn_in(platform: PlatformKind, content: &str, in_turn: bool) -
         PlatformKind::Claude => collect_claude_latest_turn(content, in_turn),
         PlatformKind::Codex => collect_codex_latest_turn(content, in_turn),
         PlatformKind::Opencode => collect_opencode_latest_turn(content, in_turn),
+        PlatformKind::Antigravity => collect_antigravity_latest_turn(content, in_turn),
         PlatformKind::Grok => collect_grok_latest_turn(content, in_turn),
     };
     transcript.activity = redact_sensitive(&transcript.activity);
@@ -981,6 +986,27 @@ fn collect_claude_latest_turn(content: &str, in_turn: bool) -> TurnTranscript {
         activity,
         turn_start,
     }
+}
+
+fn collect_antigravity_latest_turn(content: &str, mut in_turn: bool) -> TurnTranscript {
+    use crate::platforms::antigravity::{user_prompt, visit_activity};
+    let mut turn = TurnTranscript::default();
+    for line in content.lines() {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if let Some(prompt) = user_prompt(&entry) {
+            turn.user_prompt = Some(prompt.to_owned());
+            turn.turn_start = line_offset(content, line);
+            turn.activity.clear();
+            in_turn = true;
+        } else if in_turn {
+            visit_activity(&entry, |kind, text| {
+                push_section(&mut turn.activity, kind, text)
+            });
+        }
+    }
+    turn
 }
 
 /// Grok's `updates.jsonl` is an ACP session-update stream.

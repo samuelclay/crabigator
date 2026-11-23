@@ -85,7 +85,9 @@ fn resolve_platform_name(platform: Option<&str>, default_platform: &str) -> Resu
     let value = platform.unwrap_or(default_platform);
     match PlatformKind::parse(value) {
         Some(kind) => Ok(kind.as_str().to_string()),
-        None => bail!("Unknown platform: {value}. Use claude, codex, opencode, or grok."),
+        None => {
+            bail!("Unknown platform: {value}. Use claude, codex, opencode, grok, or antigravity.")
+        }
     }
 }
 
@@ -162,7 +164,7 @@ pub fn spawn_terminal_in_window(
     spawn_placed(cwd, platform, window_id, GhosttyPlacement::PreferExisting)
 }
 
-/// Open a session in `cwd` on `platform` (claude, codex, opencode, or grok).
+/// Open a session in `cwd` on `platform` (claude, codex, opencode, grok, or antigravity).
 ///
 /// Ghostty adds a tab when a window is already in that folder, and opens a
 /// new window when none is. Terminal.app opens a new window either way.

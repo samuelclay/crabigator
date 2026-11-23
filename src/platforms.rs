@@ -2,6 +2,7 @@
 //!
 //! Defines a common interface for Claude Code, Codex CLI, opencode, and Grok.
 
+pub mod antigravity;
 pub mod claude_code;
 pub mod codex_cli;
 pub mod grok;
@@ -20,6 +21,7 @@ pub enum PlatformKind {
     Codex,
     Opencode,
     Grok,
+    Antigravity,
 }
 
 impl PlatformKind {
@@ -29,6 +31,7 @@ impl PlatformKind {
             "codex" | "codecs" | "openai" => Some(Self::Codex),
             "opencode" | "open-code" | "open_code" => Some(Self::Opencode),
             "grok" | "grok-build" | "grok_build" | "xai" => Some(Self::Grok),
+            "antigravity" | "anti-gravity" | "agy" | "gemini" => Some(Self::Antigravity),
             _ => None,
         }
     }
@@ -39,11 +42,15 @@ impl PlatformKind {
             Self::Codex => "codex",
             Self::Opencode => "opencode",
             Self::Grok => "grok",
+            Self::Antigravity => "antigravity",
         }
     }
 
     pub fn command(self) -> &'static str {
-        self.as_str()
+        match self {
+            Self::Antigravity => "agy",
+            _ => self.as_str(),
+        }
     }
 
     pub fn display_name(self) -> &'static str {
@@ -52,6 +59,7 @@ impl PlatformKind {
             Self::Codex => "Codex",
             Self::Opencode => "opencode",
             Self::Grok => "Grok",
+            Self::Antigravity => "Antigravity",
         }
     }
 }
@@ -413,7 +421,29 @@ pub fn platform_for(kind: PlatformKind) -> Box<dyn Platform> {
         PlatformKind::Claude => Box::new(claude_code::ClaudeCodePlatform::new()),
         PlatformKind::Codex => Box::new(codex_cli::CodexPlatform::new()),
         PlatformKind::Opencode => Box::new(opencode::OpencodePlatform::new()),
+        PlatformKind::Antigravity => Box::new(antigravity::Antigravity::default()),
         PlatformKind::Grok => Box::new(grok::GrokPlatform::new()),
+    }
+}
+
+/// Expose the wrapped conversation by its native ID alongside the Crabigator ID.
+fn link_session_dir(native_id: &str) {
+    #[cfg(not(unix))]
+    let _ = native_id;
+    #[cfg(unix)]
+    {
+        let Ok(session_id) = std::env::var("CRABIGATOR_SESSION_ID") else {
+            return;
+        };
+        if session_id.is_empty() || native_id.is_empty() {
+            return;
+        }
+        let target = std::path::PathBuf::from(format!("/tmp/crabigator-{session_id}"));
+        let link = std::path::PathBuf::from(format!("/tmp/crabigator-{native_id}"));
+        if !target.is_dir() || link.exists() {
+            return;
+        }
+        let _ = std::os::unix::fs::symlink(&target, &link);
     }
 }
 

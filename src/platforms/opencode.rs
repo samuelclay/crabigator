@@ -190,7 +190,7 @@ fn listener_loop(
             }
             if main_session != linked_session {
                 if let Some(ref session) = main_session {
-                    link_session_dir(session);
+                    super::link_session_dir(session);
                 }
                 linked_session = main_session;
             }
@@ -300,27 +300,6 @@ fn extract_model_limits(catalog: &Value) -> HashMap<String, u64> {
         }
     }
     limits
-}
-
-/// Symlink `/tmp/crabigator-{opencode_session}` to the crabigator session
-/// directory, mirroring the Claude Code conversation-UUID symlink so any
-/// session id resolves to the session directory.
-fn link_session_dir(opencode_session: &str) {
-    #[cfg(unix)]
-    {
-        let Ok(session_id) = std::env::var("CRABIGATOR_SESSION_ID") else {
-            return;
-        };
-        if session_id.is_empty() || opencode_session.is_empty() {
-            return;
-        }
-        let target = PathBuf::from(format!("/tmp/crabigator-{session_id}"));
-        let link = PathBuf::from(format!("/tmp/crabigator-{opencode_session}"));
-        if !target.is_dir() || link.exists() {
-            return;
-        }
-        let _ = std::os::unix::fs::symlink(&target, &link);
-    }
 }
 
 #[cfg(test)]
