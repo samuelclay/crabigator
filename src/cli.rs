@@ -197,6 +197,10 @@ pub fn parse_args() -> Args {
             "--profile" => {
                 args.profile = true;
             }
+            "-p" if args.platform == Some(PlatformKind::Antigravity) => {
+                // In agy, -p runs a single prompt in print mode.
+                args.platform_args.push(arg);
+            }
             "--platform" | "-p" => {
                 if let Some(value) = iter.next() {
                     args.platform = Some(require_platform(&value));
