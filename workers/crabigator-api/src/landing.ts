@@ -4,6 +4,7 @@ import { heroCapture, claudeCapture } from './landing/desktop-capture';
 import { appModulesHtml } from './landing/app-modules';
 import { notificationPreviewHtml, notificationCss, notificationJs } from './landing/notification-preview';
 import { harborCss, harborHtml, harborJs } from './landing/harbor';
+import { surfaceCarouselCss, surfaceCarouselJs } from './landing/surface-carousel';
 import { devicePairHtml } from './landing/device-pair';
 import { flowPlayerJs } from './landing/flow-player';
 import { claimsHtml, cardsHtml } from './landing/features';
@@ -48,7 +49,7 @@ export const landingHtml = `<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
-    <style>${mcpCss}${homeCss}${productPreviewsCss}${heroStreamCss}${notificationCss}${harborCss}</style>
+    <style>${mcpCss}${homeCss}${productPreviewsCss}${heroStreamCss}${notificationCss}${harborCss}${surfaceCarouselCss}</style>
 </head>
 <body>
     <header class="site-header">
@@ -114,21 +115,23 @@ export const landingHtml = `<!DOCTYPE html>
                 <button type="button" role="tab" id="tab-android" aria-controls="panel-android" aria-selected="false" tabindex="-1">Android</button>
                 <button type="button" role="tab" id="tab-web" aria-controls="panel-web" aria-selected="false" tabindex="-1">Web</button>
             </div>
-            <div class="surface-panel" id="panel-iphone" role="tabpanel" aria-labelledby="tab-iphone">
-                <p class="surface-claim"><strong>Answer from the notification.</strong> No need to unlock.</p>
-                <figure class="notification-preview">${notificationPreviewHtml}</figure>
-            </div>
-            <div class="surface-panel" id="panel-ipad" role="tabpanel" aria-labelledby="tab-ipad">
-                <p class="surface-claim"><strong>Read, scroll back, and reply.</strong> Type or speak your next instruction.</p>
-                <figure class="tablet-preview">${tabletPreviewHtml}</figure>
-            </div>
-            <div class="surface-panel" id="panel-android" role="tabpanel" aria-labelledby="tab-android">
-                <p class="surface-claim"><strong>Android, too.</strong> The same terminal, modules, and replies.</p>
-                <figure class="android-preview">${androidPreviewHtml}</figure>
-            </div>
-            <div class="surface-panel" id="panel-web" role="tabpanel" aria-labelledby="tab-web">
-                <p class="surface-claim"><strong>Every session in a browser tab.</strong> Nothing to install. <a href="/dashboard" data-track="dashboard_cta" data-label="web_section">Open the dashboard</a></p>
-                <figure class="web-preview">${webPreviewHtml}</figure>
+            <div class="surface-deck">
+                <div class="surface-panel" id="panel-iphone" role="tabpanel" aria-labelledby="tab-iphone">
+                    <p class="surface-claim"><strong>Answer from the notification.</strong> No need to unlock.</p>
+                    <figure class="notification-preview">${notificationPreviewHtml}</figure>
+                </div>
+                <div class="surface-panel" id="panel-ipad" role="tabpanel" aria-labelledby="tab-ipad">
+                    <p class="surface-claim"><strong>Read, scroll back, and reply.</strong> Type or speak your next instruction.</p>
+                    <figure class="tablet-preview">${tabletPreviewHtml}</figure>
+                </div>
+                <div class="surface-panel" id="panel-android" role="tabpanel" aria-labelledby="tab-android">
+                    <p class="surface-claim"><strong>Android, too.</strong> The same terminal, modules, and replies.</p>
+                    <figure class="android-preview">${androidPreviewHtml}</figure>
+                </div>
+                <div class="surface-panel" id="panel-web" role="tabpanel" aria-labelledby="tab-web">
+                    <p class="surface-claim"><strong>Every session in a browser tab.</strong> Nothing to install. <a href="/dashboard" data-track="dashboard_cta" data-label="web_section">Open the dashboard</a></p>
+                    <figure class="web-preview">${webPreviewHtml}</figure>
+                </div>
             </div>
         </section>
 
@@ -177,7 +180,7 @@ ${cardsHtml}
     </footer>
     <p id="copy-status" class="sr-only" role="status"></p>
     <script>${analyticsJs}</script>
-    <script>${landingJs}${heroStreamJs}${notificationJs}${flowPlayerJs}${harborJs}</script>
+    <script>${landingJs}${heroStreamJs}${notificationJs}${flowPlayerJs}${harborJs}${surfaceCarouselJs}</script>
 </body>
 </html>`;
 
