@@ -1,8 +1,9 @@
 // Landing page HTML served at /
 import { faviconPath, faviconIcoPath, touchIconPath } from './assets/home-brand';
-import { heroCapture, claudeCapture, codexCapture } from './landing/desktop-capture';
+import { heroCapture, claudeCapture } from './landing/desktop-capture';
 import { appModulesHtml } from './landing/app-modules';
 import { notificationPreviewHtml, notificationCss, notificationJs } from './landing/notification-preview';
+import { harborCss, harborHtml, harborJs } from './landing/harbor';
 import { devicePairHtml } from './landing/device-pair';
 import { flowPlayerJs } from './landing/flow-player';
 import { claimsHtml, cardsHtml } from './landing/features';
@@ -47,14 +48,14 @@ export const landingHtml = `<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
-    <style>${mcpCss}${homeCss}${productPreviewsCss}${heroStreamCss}${notificationCss}</style>
+    <style>${mcpCss}${homeCss}${productPreviewsCss}${heroStreamCss}${notificationCss}${harborCss}</style>
 </head>
 <body>
     <header class="site-header">
         <a class="wordmark" href="/" aria-label="Crabigator home">${iconCrabigatorLogo}</a>
         <nav aria-label="Main navigation">
             <a href="#claude-code">How it works</a>
-            <a href="#codex">Supported agents</a>
+            <a href="#codex">Terminal to phone</a>
             <a href="#apps">Apps</a>
             <a href="#install">Install</a>
             <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener">GitHub</a>
@@ -101,11 +102,8 @@ export const landingHtml = `<!DOCTYPE html>
         </section>
 
         <section class="section agent" id="codex" aria-labelledby="codex-title">
-            <h2 id="codex-title">Start in your terminal. Follow along on your phone.</h2>
-            ${devicePairHtml({
-                capture: codexCapture, command: 'codex', title: 'Add scene-name uniqueness test', reverse: true,
-                label: 'Codex at work in Crabigator, adding a test, with a moving surf scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive and the same surf scene.',
-            })}
+            <h2 class="harbor-title" id="codex-title"><span>Start in your terminal.</span> <span>Follow along on your phone.</span></h2>
+            ${harborHtml}
         </section>
 
         <section class="section surfaces" id="apps" aria-labelledby="surfaces-title">
@@ -179,7 +177,7 @@ ${cardsHtml}
     </footer>
     <p id="copy-status" class="sr-only" role="status"></p>
     <script>${analyticsJs}</script>
-    <script>${landingJs}${heroStreamJs}${notificationJs}${flowPlayerJs}</script>
+    <script>${landingJs}${heroStreamJs}${notificationJs}${flowPlayerJs}${harborJs}</script>
 </body>
 </html>`;
 

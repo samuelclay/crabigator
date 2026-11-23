@@ -103,7 +103,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .agent > h2, .surfaces > h2, .ownership > h2, .extras > h2 { text-align: center; }
 .agent { padding-top: 70px; padding-bottom: 70px; }
 .device-pair.agent-pair { position: relative; display: flex; align-items: flex-end; justify-content: space-between; margin-top: 52px; }
-.agent-pair.reverse { flex-direction: row-reverse; }
 .desktop-frame.pair-desktop { flex: none; width: 73%; }
 .pair-phone { flex: none; width: 24%; }
 .desktop-capture, .pair-capture { font-size: calc((100cqw - 36px) / (var(--cols) * .6)); }
@@ -212,7 +211,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .desktop-capture, .pair-capture { font-size: calc((100cqw - 18px) / (var(--cols) * .6)); }
     .desktop-capture { padding: 14px 9px; }
     .pair-capture { padding: 9px; }
-    .device-pair.agent-pair, .agent-pair.reverse { display: block; margin-top: 36px; }
+    .device-pair.agent-pair { display: block; margin-top: 36px; }
     .desktop-frame.pair-desktop { width: 100%; }
     .hero-phone, .pair-phone { position: relative; top: auto; right: auto; width: 44%; margin: -30% 0 0 4%; z-index: 1; }
     .phone-frame { padding: 4px; border-radius: 18px; }

@@ -18,11 +18,10 @@ export function devicePairHtml(options: {
     command: string;
     title: string;
     label: string;
-    reverse?: boolean;
 }): string {
-    const { capture, command, title, label, reverse } = options;
+    const { capture, command, title, label } = options;
     return `
-            <figure class="device-pair agent-pair${reverse ? ' reverse' : ''}" data-step="380" aria-label="${label}">
+            <figure class="device-pair agent-pair" data-step="380" aria-label="${label}">
                 <div class="desktop-frame pair-desktop">
                     <div class="desktop-bar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>crabigator — ${command}</span></div>
                     <div class="pair-capture term-capture" style="--cols:${capture.cols}" aria-hidden="true">${capture.desktopHtml}</div>
