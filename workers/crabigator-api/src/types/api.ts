@@ -69,6 +69,7 @@ export interface CreateSessionRequest {
 }
 
 export interface CreateSessionResponse {
+    share_url: string;
     id: string;             // Cloud session ID
     ws_url: string;         // WebSocket URL for events
 }

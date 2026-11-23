@@ -1,3 +1,4 @@
+import { shareUrl } from './shared-session';
 import { disconnectedSessions } from '../session-presence';
 import type { Env } from '../types/env';
 import type {
@@ -81,44 +82,29 @@ export async function createSession(
     }
 
     const sessionId = generateUUID();
+    const token = generateUUID();
     const now = Math.floor(Date.now() / 1000);
 
-    // Check if session already exists (resume case)
-    const existing = await env.DB.prepare(
-        'SELECT id FROM sessions WHERE device_id = ? AND client_session_id = ?'
-    ).bind(device_id, client_session_id).first<{ id: string }>();
-
-    if (existing) {
-        await env.DB.prepare(`
-            UPDATE sessions
-            SET cwd = ?,
-                platform = ?,
-                pr_scope = ?,
-                session_mark = COALESCE(?, session_mark),
-                state = CASE WHEN is_active = 1 THEN state ELSE 'ready' END,
-                ended_at = NULL,
-                is_active = 1,
-                last_seen_at = ?
-            WHERE id = ?
-        `).bind(cwd, platform, prScope, markJson, now, existing.id).run();
-
-        // Session already exists, return existing ID
-        const url = new URL(request.url);
-        const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${url.host}/api/sessions/${existing.id}/connect`;
-
-        const response: CreateSessionResponse = {
-            id: existing.id,
-            ws_url: wsUrl,
-        };
-        return jsonResponse(response);
-    }
-
-    // Create new session
-    await env.DB.prepare(`
-        INSERT INTO sessions (id, device_id, client_session_id, cwd, platform, pr_scope, session_mark, state, started_at, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, 1)
-    `).bind(sessionId, device_id, client_session_id, cwd, platform, prScope, markJson, now).run();
+    // A retry or resume keeps both identities, even if two registrations overlap.
+    const registered = await env.DB.prepare(`
+        INSERT INTO sessions (id, device_id, client_session_id, cwd, platform, pr_scope, session_mark, state, started_at, is_active, share_token)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, 1, ?)
+        ON CONFLICT(device_id, client_session_id) DO UPDATE SET
+            share_token = COALESCE(sessions.share_token, excluded.share_token),
+            cwd = excluded.cwd, platform = excluded.platform, pr_scope = excluded.pr_scope,
+            session_mark = COALESCE(excluded.session_mark, sessions.session_mark),
+            state = CASE WHEN sessions.is_active = 1 THEN sessions.state ELSE 'ready' END,
+            ended_at = NULL, is_active = 1, last_seen_at = excluded.started_at
+        RETURNING id, share_token
+    `).bind(sessionId, device_id, client_session_id, cwd, platform, prScope, markJson, now, token)
+        .first<{ id: string; share_token: string }>();
+    if (!registered) throw new Error('Session registration returned no row');
+    const ws = new URL('/api/sessions/' + registered.id + '/connect', request.url);
+    ws.protocol = ws.protocol === 'https:' ? 'wss:' : 'ws:';
+    const response: CreateSessionResponse = {
+        id: registered.id, ws_url: ws.href, share_url: shareUrl(request, registered.share_token),
+    };
+    if (registered.id !== sessionId) return jsonResponse(response);
 
     // Unhide project if it was manually hidden
     const device = await env.DB.prepare('SELECT group_id, COALESCE(display_name, name) as device_name FROM devices WHERE id = ?')
@@ -158,14 +144,6 @@ export async function createSession(
         },
     });
 
-    const url = new URL(request.url);
-    const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${url.host}/api/sessions/${sessionId}/connect`;
-
-    const response: CreateSessionResponse = {
-        id: sessionId,
-        ws_url: wsUrl,
-    };
     return jsonResponse(response, 201);
 }
 
@@ -361,11 +339,6 @@ export async function getSession(
         );
     }
 
-    const url = new URL(request.url);
-    const shareUrl = session.share_token
-        ? `https://${url.host}/api/shared/${session.share_token}`
-        : null;
-
     const response: GetSessionResponse = {
         id: session.id,
         client_session_id: session.client_session_id,
@@ -384,7 +357,7 @@ export async function getSession(
             completions_changed_at: session.completions_changed_at || undefined,
         },
         session_mark: parseStoredSessionMark(session.session_mark),
-        share_url: shareUrl,
+        share_url: session.share_token ? shareUrl(request, session.share_token) : null,
     };
     return jsonResponse(response);
 }

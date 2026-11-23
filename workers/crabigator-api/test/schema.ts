@@ -80,7 +80,9 @@ export async function ensureAccountSchema(env: Env): Promise<void> {
                 additions INTEGER,
                 deletions INTEGER,
                 pr_scope TEXT,
-                session_mark TEXT
+                share_token TEXT UNIQUE,
+                session_mark TEXT,
+                UNIQUE(device_id, client_session_id)
             )
         `),
         env.DB.prepare(`

@@ -1,3 +1,4 @@
+import { SessionArchive } from './session-archive';
 import { cleanRecap, cleanRecapEvent, hasRecapContent } from '../recap';
 import { SESSION_DISCONNECT_GRACE_MS } from '../session-presence';
 import { notifyMobilePrompt } from '../mobile-push';
@@ -231,12 +232,12 @@ interface SessionInfo {
  * Handles:
  * - Desktop WebSocket connection (receives events, sends answers)
  * - Hibernatable WebSocket streams for mobile/web viewers
- * - Event persistence (only critical state)
+ * - Session history and snapshots for read-only links
  * - Late-joiner state catchup
  *
  * Cost optimization:
- * - Splits state into persistent (state/prompt/title) and ephemeral (screen/scrollback)
- * - Only persists on meaningful state changes, not every event
+ * - Appends terminal history separately from the small live replay buffer
+ * - Coalesces fast screen and widget changes before checkpointing the archive
  * - Tracks viewer activity to notify desktop for streaming optimization
  */
 export class SessionDO implements DurableObject {
@@ -270,9 +271,15 @@ export class SessionDO implements DurableObject {
     /** Serializes stats persistence so external D1 I/O cannot reorder updates. */
     private statsUpdateQueue: Promise<void> = Promise.resolve();
 
+    private archive: SessionArchive;
+    private archiveTimer: ReturnType<typeof setTimeout> | null = null;
+    private lastArchiveFlush = 0;
+    private archiveDirty = new Set<'lastScreen' | 'lastGit' | 'lastChanges' | 'lastStats'>();
+
     constructor(state: DurableObjectState, env: Env) {
         this.state = state;
         this.env = env;
+        this.archive = new SessionArchive(state.storage);
         this.persistentState = {
             sessionId: '',
             state: 'ready',
@@ -371,6 +378,8 @@ export class SessionDO implements DurableObject {
                 }
             case '/state':
                 return this.handleGetState();
+            case '/shared-view':
+                return this.sharedView(url);
             case '/snapshot':
                 return this.handleSnapshot();
             case '/prs':
@@ -950,11 +959,13 @@ export class SessionDO implements DurableObject {
                 }
                 break;
             case 'scrollback_history':
+                this.archive.history(event.content, true);
                 // A full snapshot replaces history, including after reconnect.
                 this.ephemeralState.scrollbackContent = this.trimScrollback(event.content);
                 this.ephemeralState.lastScrollbackLine = event.content.split('\n').length;
                 break;
             case 'scrollback':
+                this.archive.history(event.diff, false);
                 this.ephemeralState.lastScrollbackLine = event.total_lines;
                 this.ephemeralState.scrollbackContent = this.trimScrollback(
                     this.ephemeralState.scrollbackContent + event.diff);
@@ -1163,6 +1174,18 @@ export class SessionDO implements DurableObject {
                     }
                 }
                 break;
+        }
+
+        // Coalesce fast screen and stats updates. A close flushes the final frame.
+        const cacheFields = { screen: 'lastScreen', git: 'lastGit', changes: 'lastChanges', stats: 'lastStats' } as const;
+        if (event.type === 'screen' || event.type === 'git' || event.type === 'changes' || event.type === 'stats') {
+            this.archiveDirty.add(cacheFields[event.type]);
+            if (Date.now() - this.lastArchiveFlush >= 15_000) {
+                this.flushArchive();
+            } else {
+                if (this.archiveTimer !== null) clearTimeout(this.archiveTimer);
+                this.archiveTimer = setTimeout(() => this.flushArchive(), 750);
+            }
         }
 
         // Increment ephemeral sequence
@@ -1708,6 +1731,39 @@ export class SessionDO implements DurableObject {
         });
     }
 
+    private flushArchive(): void {
+        if (this.archiveTimer !== null) clearTimeout(this.archiveTimer);
+        this.archiveTimer = null;
+        this.lastArchiveFlush = Date.now();
+        for (const field of this.archiveDirty) {
+            this.archive.set(field, JSON.stringify(this.ephemeralState[field]));
+        }
+        this.archiveDirty.clear();
+    }
+
+    // Explicit read model. Drafts, input controls, prompts, device and account
+    // credentials have no representation on the public channel.
+    private sharedView(url: URL): Response {
+        if (this.desktopWs && Date.now() - this.lastViewerActivity >= 4000) this.handleViewerActive();
+        const saved = this.persistentState;
+        const live = this.ephemeralState;
+        const cached = (field: 'lastScreen' | 'lastGit' | 'lastChanges' | 'lastStats') =>
+            live[field] ?? JSON.parse(this.archive.get(field) ?? 'null');
+        const stats = cached('lastStats');
+        return Response.json({
+            title: saved.lastTitle, titles: saved.lastTitleHistory, state: saved.state,
+            connected: this.liveDesktopSocket() !== null,
+            screen: cached('lastScreen'), git: cached('lastGit'), changes: cached('lastChanges'),
+            stats: stats && { prompts: stats.prompts, tools: stats.tools, model: stats.model,
+                completions: stats.completions, thinking_seconds: stats.thinking_seconds,
+                context_used: stats.context_used, context_limit: stats.context_limit },
+            history: this.archive.page(url.searchParams.get('generation'), Number(url.searchParams.get('cursor'))),
+            recap: saved.lastRecap?.latest, recaps: saved.lastRecapHistory,
+            prs: saved.lastPrs, commits: saved.lastCommitHistory, flow: saved.lastFlow,
+            threads: saved.lastSlackThreads,
+        });
+    }
+
     /**
      * One JSON blob for MCP tools and other late joiners that do not want
      * a WebSocket replay of every event type.
@@ -1902,6 +1958,7 @@ export class SessionDO implements DurableObject {
             return;
         }
 
+        this.flushArchive();
         this.desktopWs = null;
         this.disconnectedAt = Date.now();
         await this.state.storage.put('disconnectedAt', this.disconnectedAt);
@@ -1932,6 +1989,7 @@ export class SessionDO implements DurableObject {
         }
 
         console.error('Desktop WebSocket error:', error);
+        this.flushArchive();
         this.desktopWs = null;
         this.disconnectedAt = Date.now();
         await this.state.storage.put('disconnectedAt', this.disconnectedAt);

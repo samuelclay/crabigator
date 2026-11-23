@@ -408,6 +408,20 @@ export const sessionJs = `
             \`;
         }
 
+        async function openSharedSession(id, button) {
+            const tab = window.open('about:blank', '_blank');
+            if (tab) tab.opener = null;
+            try {
+                const response = await fetch(API_BASE + '/sessions/' + id + '/share', { method: 'POST', headers: getAuthHeaders() });
+                if (!response.ok) throw new Error();
+                const { url } = await response.json();
+                (tab || window).location.replace(url);
+            } catch {
+                tab?.close();
+                button.textContent = 'Retry ' + id.slice(0, 8) + ' ↗';
+            }
+        }
+
         function createSessionCard(session, insertAtTop = false, replaceCard = null, expanded = expandedSessions.has(session.id) || sessionMatchesFocus(session)) {
             const container = document.getElementById('sessions');
             const previous = sessions.get(session.id);
@@ -425,7 +439,7 @@ export const sessionJs = `
                 <div class="info-popover" id="info-popover-\${session.id}">
                     <div class="info-popover-row">
                         <span class="info-popover-label">Session ID</span>
-                        <span class="info-popover-value copyable" onclick="copyToClipboard('\${session.id}')" title="Click to copy">\${session.id}</span>
+                        <button class="focus-session-btn" onclick="openSharedSession('\${session.id}', this)" title="Open public read-only link">\${session.id.slice(0, 8)} ↗</button>
                     </div>
                     <div class="info-popover-row">
                         <span class="info-popover-label">Started</span>

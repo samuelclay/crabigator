@@ -7,7 +7,7 @@ export const privacyHtml = `<!doctype html>
 </style></head><body><main>
 <nav><a href="/">← Crabigator</a></nav>
 <h1>Privacy policy</h1><p class="date">Effective November 4, 2026</p>
-<p class="summary">Crabigator connects your phone, tablet, and browser to coding assistants running on your computers. When you stream a session, its terminal content and project details pass through our service so your paired devices can display them. Only stream content you intend to make available to your account.</p>
+<p class="summary">Crabigator connects your phone, tablet, and browser to coding assistants running on your computers. When you stream a session, its terminal content and project details pass through our service so your paired devices can display them. Anyone you give a public session link can also read that session, including its saved terminal and project details after it ends.</p>
 <p>This policy covers the official Crabigator service at drinkcrabigator.com and the Crabigator iOS, Android, and desktop apps. Crabigator is operated by Samuel Clay. A self-hosted server is controlled by its operator and may have a different privacy policy.</p>
 <h2>Information we handle</h2>
 <ul>
