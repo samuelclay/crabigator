@@ -11,6 +11,10 @@ function* chunks(content: string) {
 // History pages address complete chunks. A desktop resync starts a new generation,
 // so a reader can never append rows from a previous version of the terminal.
 export class SessionArchive {
+    private fields = new Map<string, string | null>();
+    private parsed = new Map<string, unknown>();
+    private latestPart: number | null = null;
+
     constructor(private storage: DurableObjectStorage) {
         storage.sql.exec('CREATE TABLE IF NOT EXISTS terminal_history (part INTEGER PRIMARY KEY, content TEXT NOT NULL)');
         storage.sql.exec('CREATE TABLE IF NOT EXISTS archive_fields (name TEXT, part INTEGER, value TEXT NOT NULL, PRIMARY KEY (name, part))');
@@ -38,6 +42,17 @@ export class SessionArchive {
                 sql.exec('INSERT INTO terminal_history (content) VALUES (?)', chunk);
             }
         });
+        this.latestPart = null;
+    }
+
+    latest(): number {
+        if (this.latestPart === null) {
+            const row = this.storage.sql.exec<{ latest: number }>(
+                'SELECT COALESCE(MAX(part), 0) AS latest FROM terminal_history',
+            ).one();
+            this.latestPart = row.latest;
+        }
+        return this.latestPart;
     }
 
     page(generation: string | null, cursor: number) {
@@ -63,10 +78,23 @@ export class SessionArchive {
                 sql.exec('INSERT INTO archive_fields VALUES (?, ?, ?)', name, part++, chunk);
             }
         });
+        this.fields.set(name, value);
+        this.parsed.delete(name);
     }
 
     get(name: string): string | null {
+        if (this.fields.has(name)) return this.fields.get(name)!;
         const rows = this.storage.sql.exec<{ value: string }>('SELECT value FROM archive_fields WHERE name = ? ORDER BY part', name).toArray();
-        return rows.length ? rows.map(row => row.value).join('') : null;
+        const value = rows.length ? rows.map(row => row.value).join('') : null;
+        this.fields.set(name, value);
+        return value;
+    }
+
+    getJson<T = unknown>(name: string): T | null {
+        if (this.parsed.has(name)) return this.parsed.get(name) as T | null;
+        const raw = this.get(name);
+        const value = raw === null ? null : JSON.parse(raw) as T;
+        this.parsed.set(name, value);
+        return value;
     }
 }

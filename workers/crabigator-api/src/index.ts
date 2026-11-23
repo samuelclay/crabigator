@@ -101,7 +101,7 @@ function withStaffSession(handler: RouteHandler): RouteHandler {
 router.get('/api/conductor', conductorRoute);
 for (const action of ['message', 'host', 'tool', 'report', 'archive']) router.post('/api/conductor/' + action, conductorRoute);
 
-router.get('/assets/shared-session.js', async () => new Response(sharedSessionJs, { headers: { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' } }));
+router.get('/assets/shared-session.js', async () => new Response(sharedSessionJs, { headers: { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=60, s-maxage=300' } }));
 router.get('/share/:token', sharedSession);
 router.get('/share/:token/data', sharedSession);
 router.post('/api/sessions/:id/share', ownerShareLink);

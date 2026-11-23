@@ -1747,9 +1747,10 @@ export class SessionDO implements DurableObject {
         if (this.desktopWs && Date.now() - this.lastViewerActivity >= 4000) this.handleViewerActive();
         const saved = this.persistentState;
         const live = this.ephemeralState;
-        const cached = (field: 'lastScreen' | 'lastGit' | 'lastChanges' | 'lastStats') =>
-            live[field] ?? JSON.parse(this.archive.get(field) ?? 'null');
+        const cached = <K extends 'lastScreen' | 'lastGit' | 'lastChanges' | 'lastStats'>(field: K) =>
+            live[field] ?? this.archive.getJson<typeof live[K]>(field);
         const stats = cached('lastStats');
+        const history = this.archive.page(url.searchParams.get('generation'), Number(url.searchParams.get('cursor')));
         return Response.json({
             title: saved.lastTitle, titles: saved.lastTitleHistory, state: saved.state,
             connected: this.liveDesktopSocket() !== null,
@@ -1760,10 +1761,15 @@ export class SessionDO implements DurableObject {
                 idle_since: stats.idle_since, prompts_changed_at: stats.prompts_changed_at,
                 completions_changed_at: stats.completions_changed_at, compressions_changed_at: stats.compressions_changed_at,
                 context_used: stats.context_used, context_limit: stats.context_limit },
-            history: this.archive.page(url.searchParams.get('generation'), Number(url.searchParams.get('cursor'))),
+            history,
             recap: saved.lastRecap?.latest, recaps: saved.lastRecapHistory,
             prs: saved.lastPrs, commits: saved.lastCommitHistory, flow: saved.lastFlow,
             threads: saved.lastSlackThreads,
+        }, {
+            headers: {
+                'X-Archive-Generation': history.generation,
+                'X-Archive-Latest': String(this.archive.latest()),
+            },
         });
     }
 
