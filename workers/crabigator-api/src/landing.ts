@@ -105,7 +105,7 @@ export const landingHtml = `<!DOCTYPE html>
         </section>
 
         <section class="section surfaces" id="apps" aria-labelledby="surfaces-title">
-            <h2 id="surfaces-title">Your sessions,<span>on every screen.</span></h2>
+            <h2 id="surfaces-title">Your agents work in parallel. <span>So can you.</span></h2>
             <div class="surface-tabs" role="tablist" aria-label="Screens" hidden>
                 <button type="button" role="tab" id="tab-iphone" aria-controls="panel-iphone" aria-selected="true">iPhone</button>
                 <button type="button" role="tab" id="tab-ipad" aria-controls="panel-ipad" aria-selected="false" tabindex="-1">iPad</button>
