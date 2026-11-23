@@ -150,17 +150,21 @@ function sizeHarbor(w, h) {
     lamp.style.top = 100 * ly / height + '%';
 }
 function drawHarbor(t, light, rgb) {
-    // Project a horizontal turn onto the tilted view of the harbor.
+    // The front half sweeps over the water. The far half recedes along the horizon.
     const angle = t * Math.PI / 5;
     const bearing = Math.cos(angle);
-    lamp.style.setProperty('--sweep', 'matrix(' + bearing + ',' + (.16 * Math.sin(angle) - .03) + ',0,1,0,0)');
+    const facing = Math.sin(angle);
+    const rear = Math.max(0, -facing);
+    lamp.style.setProperty('--sweep', 'matrix(' + bearing + ',' + (.14 * Math.max(0, facing)) + ',0,' + (1 - .85 * rear) + ',0,0)');
+    const beamOpacity = 1 - .8 * rear;
+    lamp.style.setProperty('--beam-opacity', String(beamOpacity));
 
     lamp.style.opacity = String(light);
     if (!uniforms || gl.isContextLost()) return;
     gl.viewport(0, 0, width, height);
     gl.uniform2f(uniforms.size, width, height); gl.uniform2f(uniforms.lantern, lanternX, lanternY);
     gl.uniform2f(uniforms.moon, moonX, 0); gl.uniform1f(uniforms.horizon, sea);
-    gl.uniform1f(uniforms.seconds, t % (Math.PI * 40)); gl.uniform1f(uniforms.light, light);
+    gl.uniform1f(uniforms.seconds, t % (Math.PI * 40)); gl.uniform1f(uniforms.light, light * beamOpacity);
     gl.uniform1f(uniforms.bearing, bearing); gl.uniform3f(uniforms.beacon, rgb[0]/255, rgb[1]/255, rgb[2]/255);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
