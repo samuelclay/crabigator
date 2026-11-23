@@ -1,9 +1,10 @@
 // Paint the pixel coast once at each size. A small transparent WebGL layer
-// adds water, moonlight and the beacon's sweep while the exchange is playing.
+// animates the water and its reflections beneath the revolving lamp.
 const waterShader = `
 precision mediump float;
 uniform vec2 size, lantern, moon;
-uniform float horizon, seconds, light;
+uniform float horizon, seconds, light, bearing;
+uniform vec3 beacon;
 float hash(vec2 p) { return fract(sin(dot(mod(p,256.),vec2(12.1,38.7)))*431.8); }
 void main() {
     vec2 p = vec2(gl_FragCoord.x, size.y-gl_FragCoord.y);
@@ -17,18 +18,9 @@ void main() {
         float glint = smoothstep(.70,.97,hash(vec2(floor(x),y))) * step(mod(p.y,3.),1.0);
         float wobble = 5.*sin(y*1.3+seconds);
         float silver = exp(-abs(p.x-moon.x+wobble)/(4.+depth*32.));
-        float gold = exp(-abs(p.x-lantern.x+wobble)/(3.+depth*22.))*light;
-        color = mix(color,vec3(1.,.66,.28),gold/(silver+gold+.001));
-        alpha = glint*(.13+.7*silver+.95*gold);
-    } else {
-        vec2 delta = p-lantern;
-        float direction = cos(seconds*.95);
-        float d = delta.x * sign(direction);
-        float spread = 1.2 + max(d,0.)*.095;
-        float beam = (1.-smoothstep(spread*.55,spread,abs(delta.y+d*.09)))
-                   * (1.-smoothstep(0.,size.x*.42,d)) * step(0.,d);
-        alpha = light*beam*.46*abs(direction);
-        color = vec3(1.,.75,.42);
+        float reflected = exp(-abs(p.x-lantern.x-depth*bearing*size.x*.28+wobble)/(3.+depth*22.))*light;
+        color = mix(color,beacon,reflected/(silver+reflected+.001));
+        alpha = glint*(.13+.7*silver+.95*reflected);
     }
     gl_FragColor = vec4(color, clamp(alpha,0.,1.));
 }`;
@@ -60,7 +52,7 @@ function prepareWater() {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     const pos = gl.getAttribLocation(program, 'point');
     gl.enableVertexAttribArray(pos); gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
-    uniforms = Object.fromEntries(['size', 'lantern', 'moon', 'horizon', 'seconds', 'light'].map(name => [name, gl.getUniformLocation(program, name)]));
+    uniforms = Object.fromEntries(['size', 'lantern', 'moon', 'horizon', 'seconds', 'light', 'bearing', 'beacon'].map(name => [name, gl.getUniformLocation(program, name)]));
 }
 water.addEventListener('webglcontextlost', event => { event.preventDefault(); uniforms = null; });
 water.addEventListener('webglcontextrestored', () => { prepareWater(); paint(); });
@@ -152,16 +144,24 @@ function sizeHarbor(w, h) {
         const y = height * (1.035 - .13 * Math.pow(Math.max(0, 1 - x / (width * .28)), 2)) + ridge(x / width, 4) * 3;
         rect(x, y, 1, height - y, '#101f2b');
     }
+    lamp.style.setProperty('--beam-length', w * .48 + 'px');
+    lamp.style.setProperty('--beam-width', w * .09 + 'px');
     lamp.style.left = 100 * lx / width + '%';
     lamp.style.top = 100 * ly / height + '%';
 }
-function drawHarbor(t, light) {
+function drawHarbor(t, light, rgb) {
+    // Project a horizontal turn onto the tilted view of the harbor.
+    const angle = t * Math.PI / 5;
+    const bearing = Math.cos(angle);
+    lamp.style.setProperty('--sweep', 'matrix(' + bearing + ',' + (.16 * Math.sin(angle) - .03) + ',0,1,0,0)');
+
     lamp.style.opacity = String(light);
     if (!uniforms || gl.isContextLost()) return;
     gl.viewport(0, 0, width, height);
     gl.uniform2f(uniforms.size, width, height); gl.uniform2f(uniforms.lantern, lanternX, lanternY);
     gl.uniform2f(uniforms.moon, moonX, 0); gl.uniform1f(uniforms.horizon, sea);
-    gl.uniform1f(uniforms.seconds, t); gl.uniform1f(uniforms.light, light);
+    gl.uniform1f(uniforms.seconds, t % (Math.PI * 40)); gl.uniform1f(uniforms.light, light);
+    gl.uniform1f(uniforms.bearing, bearing); gl.uniform3f(uniforms.beacon, rgb[0]/255, rgb[1]/255, rgb[2]/255);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 `;
