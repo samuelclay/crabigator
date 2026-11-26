@@ -431,6 +431,107 @@ final class CrabigatorTests: XCTestCase {
     func session(_ id: String, prompt: Int, machine: String = "Mac", state: String = "complete") -> Session {
         Session(["session_id": id, "title": id, "device_name": machine, "prompts_changed_at": prompt, "state": state, "active": true])
     }
+    @MainActor func testPreviousPromptAtBottomSkipsCodexComposer() async throws {
+        let placeholder = "Ask Codex to do anything"
+        let turn = "\u{1b}[0m\u{1b}[48;2;59;60;65;2m› \u{1b}[22m"
+        let composer = "\u{1b}[48;2;49;51;56;1m›\u{1b}[22m "
+        let reset = "\u{1b}[0m"
+        let history = (1...4).map { "\(turn)Submitted \($0)\(reset)" }.joined(separator: "\n")
+        // A user can submit the exact placeholder text as a real turn.
+        let output = Array(repeating: "Output row", count: 40).joined(separator: "\n")
+        let screen = "\(turn)\(placeholder)\(reset)\n\(output)\n"
+        var pinned = true
+        let terminal = TerminalViewport(history: history, screen: "", preferences: Preferences(),
+                                        pinned: Binding(get: { pinned }, set: { pinned = $0 }))
+        let coordinator = terminal.makeCoordinator()
+        let view = TerminalScrollView(frame: CGRect(x: 0, y: 0, width: 320, height: 300))
+        coordinator.view = view
+        view.layoutIfNeeded()
+        func render(_ live: String) async throws {
+            coordinator.parent.screen = live
+            coordinator.update()
+            for _ in 0..<100 where coordinator.appliedRevision != coordinator.revision {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            XCTAssertEqual(coordinator.appliedRevision, coordinator.revision)
+        }
+        for input in ["\u{1b}[2m" + placeholder, "Unsent draft"] {
+            try await render(screen + composer + input + reset + "\n  GPT-6 · ← for agents")
+            XCTAssertEqual(view.previous.accessibilityLabel, "Previous prompt, 5 of 5, " + placeholder)
+            XCTAssertTrue(view.nextPrompt.isHidden)
+        }
+
+        let text = view.text
+        let submittedOffset = (text.text as NSString).range(of: "› " + placeholder).location
+        let position = try XCTUnwrap(text.position(from: text.beginningOfDocument, offset: submittedOffset))
+        let expectedY = text.caretRect(for: position).minY - 6
+        coordinator.jump(view.previous)
+        for _ in 0..<50 where view.isAnimatingScroll { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(text.contentOffset.y, expectedY, accuracy: 1)
+        XCTAssertEqual(view.previous.accessibilityLabel, "Previous prompt, 4 of 5, Submitted 4")
+
+        coordinator.jumpToBottom()
+        for _ in 0..<50 where view.isAnimatingScroll { try await Task.sleep(for: .milliseconds(20)) }
+        coordinator.parent.history = ""
+        try await render("› Actual submission\nResponse\n› " + placeholder + "\n")
+        XCTAssertEqual(view.previous.accessibilityLabel, "Previous prompt, 1 of 1, Actual submission")
+        try await render("› " + placeholder + "\n  GPT-6 · ← for agents")
+        XCTAssertTrue(view.previous.isHidden)
+    }
+
+    @MainActor func testPromptNumbersChangeAtEachCrossingDuringDragAndCoast() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        let controller = UIViewController()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        var pinned = true
+        let rows = (1...6).map { prompt in
+            (["› Prompt \(prompt)"] + (1...80).map { "Output row \($0)" }).joined(separator: "\n")
+        }
+        let terminal = TerminalViewport(history: rows.joined(separator: "\n"), screen: "", preferences: Preferences(),
+                                        pinned: Binding(get: { pinned }, set: { pinned = $0 }))
+        let coordinator = terminal.makeCoordinator()
+        let view = TerminalScrollView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        controller.view.addSubview(view)
+        view.layoutIfNeeded()
+        coordinator.view = view
+        view.text.delegate = coordinator
+        coordinator.update()
+        for _ in 0..<100 where coordinator.appliedRevision == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(view.previous.accessibilityLabel, "Previous prompt, 6 of 6, Prompt 6")
+
+        // Navigate back until the previous button offers prompt 2.
+        for index in stride(from: 6, through: 3, by: -1) {
+            XCTAssertEqual(view.previous.tag, index - 1)
+            coordinator.jump(view.previous)
+        }
+        for _ in 0..<50 where view.isAnimatingScroll { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(view.previous.tag, 1)
+        let text = view.text
+        let offset = (text.text as NSString).range(of: "› Prompt 2").location
+        let position = try XCTUnwrap(text.position(from: text.beginningOfDocument, offset: offset))
+        let promptY = text.caretRect(for: position).minY
+        func checkOffset(_ y: CGFloat, previous: Int, next: Int, line: UInt = #line) {
+            text.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+            XCTAssertEqual(view.previous.accessibilityLabel, "Previous prompt, \(previous) of 6, Prompt \(previous)", line: line)
+            XCTAssertEqual(view.nextPrompt.accessibilityLabel, "Next prompt, \(next) of 6, Prompt \(next)", line: line)
+        }
+
+        coordinator.scrollViewWillBeginDragging(text)
+        XCTAssertEqual(view.previous.tag, 1)
+        checkOffset(promptY + 3, previous: 2, next: 3)
+        checkOffset(promptY - 3, previous: 1, next: 2)
+        checkOffset(promptY + 3, previous: 2, next: 3)
+        coordinator.scrollViewDidEndDragging(text, willDecelerate: true)
+        checkOffset(promptY - 3, previous: 1, next: 2)
+        coordinator.update()
+        XCTAssertEqual(view.previous.tag, 0)
+        coordinator.scrollViewDidEndDecelerating(text)
+        XCTAssertEqual(view.previous.tag, 0)
+    }
+
     @MainActor func testFollowButtonAnimatesWithoutUpdatesJumpingToTheEnd() async throws {
         if UIAccessibility.isReduceMotionEnabled { throw XCTSkip("Animation is disabled by Reduce Motion") }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
@@ -466,7 +567,7 @@ final class CrabigatorTests: XCTestCase {
         // TextKit refines its estimated document height as distant rows appear.
         let finalBottom = view.text.contentSize.height - view.text.bounds.height + view.text.adjustedContentInset.bottom
         XCTAssertEqual(view.text.contentOffset.y, finalBottom, accuracy: 1)
-        XCTAssertFalse(view.isFollowingAnimation)
+        XCTAssertFalse(view.isAnimatingScroll)
     }
 
     @MainActor func testFollowRequestedDuringCoastingRunsWhenIdleEvenWithoutNewOutput() {

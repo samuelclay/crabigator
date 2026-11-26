@@ -31,13 +31,19 @@ final class DemoTests: XCTestCase {
         capture("demo-reply", app)
         let previous = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Previous prompt")).firstMatch
         XCTAssertTrue(previous.label.contains("3 of 3, Show the tests"))
+        let bottom = app.buttons["Scroll to bottom"]
+        XCTAssertFalse(bottom.exists)
         previous.tap()
+        XCTAssertTrue(bottom.isHittable)
         XCTAssertTrue(previous.label.contains("2 of 3, Dark"))
         previous.tap()
         let next = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Next prompt")).firstMatch
         XCTAssertTrue(next.label.contains("3 of 3, Show the tests"))
         next.tap()
         XCTAssertFalse(next.exists)
+        bottom.tap()
+        XCTAssertFalse(bottom.exists)
+        XCTAssertTrue(previous.label.contains("3 of 3, Show the tests"))
         app.buttons["Back"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "PR #24")).firstMatch.waitForExistence(timeout: 5))
     }

@@ -4,18 +4,32 @@ private struct TerminalPrompt: Equatable {
     let offset: Int
     let excerpt: String
 
-    static func scan(_ rendered: NSAttributedString, plainTranscript: Bool, startingAt base: Int = 0) -> [Self] {
+    static func scan(_ rendered: NSAttributedString, plainTranscript: Bool, startingAt base: Int = 0, liveScreen: Bool = false) -> [Self] {
         var offset = base
-        return rendered.string.split(separator: "\n", omittingEmptySubsequences: false).compactMap { line in
+        let lines = rendered.string.split(separator: "\n", omittingEmptySubsequences: false)
+        // Older snapshots lack styling. Only the final Codex input on the live
+        // screen can be the composer; history may contain the same words.
+        let lastCodexRow = liveScreen && plainTranscript ? lines.lastIndex { $0.hasPrefix("› ") } : nil
+        return lines.enumerated().compactMap { index, line in
             defer { offset += line.utf16.count + 1 }
             guard let marker = line.first, "❯›>".contains(marker),
                   line.dropFirst().first?.isWhitespace == true else { return nil }
             let attrs = rendered.attributes(at: offset - base, effectiveRange: nil)
+            let bold = (attrs[.font] as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitBold) == true
+            // Codex shades both submitted turns and the composer. Only the
+            // composer has a bold ›, including when it contains an unsent draft.
+            if marker == "›" && bold { return nil }
             if marker == ">" {
-                guard (attrs[.font] as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitBold) == true else { return nil }
+                guard bold else { return nil }
             } else if !plainTranscript && attrs[.backgroundColor] == nil { return nil }
             let text = line.dropFirst().trimmingCharacters(in: .whitespaces)
             guard !text.isEmpty else { return nil }
+            if index == lastCodexRow {
+                let footer = lines[(index + 1)...].first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                if let footer {
+                    if footer.contains("for agents") || footer.contains("? for shortcuts") || footer.contains("context left") { return nil }
+                } else if text == "Ask Codex to do anything" { return nil }
+            }
             return Self(offset: offset, excerpt: String(text.prefix(80)))
         }
     }
@@ -43,8 +57,11 @@ struct TerminalViewport: UIViewRepresentable {
         context.coordinator.view = view
         view.previous.addTarget(context.coordinator, action: #selector(Coordinator.jump(_:)), for: .touchUpInside)
         view.nextPrompt.addTarget(context.coordinator, action: #selector(Coordinator.jump(_:)), for: .touchUpInside)
+        view.bottomButton.addTarget(context.coordinator, action: #selector(Coordinator.jumpToBottom), for: .touchUpInside)
+        view.onScrollAnimationEnd = { [weak coordinator = context.coordinator] in coordinator?.renderLatest() }
         return view
     }
+    static func dismantleUIView(_ view: TerminalScrollView, coordinator: Coordinator) { view.cancelScrollAnimation() }
     func updateUIView(_ view: TerminalScrollView, context: Context) { context.coordinator.parent = self; context.coordinator.openURL = context.environment.openURL; context.coordinator.update() }
 
     final class Coordinator: NSObject, UITextViewDelegate, UIScrollViewDelegate, UIGestureRecognizerDelegate {
@@ -57,6 +74,7 @@ struct TerminalViewport: UIViewRepresentable {
         private var cachedPrompts: [TerminalPrompt] = []
         private var prompts: [TerminalPrompt] = []
         private var selected: TerminalPrompt?
+        private var applyingFrame = false
         var cachedWidth: CGFloat = 0
         var appliedHistory = "", appliedStyle: Preferences?
         var rendering = false
@@ -69,13 +87,13 @@ struct TerminalViewport: UIViewRepresentable {
         }
         func update() {
             guard let view else { return }
-            if parent.pinned && !wasPinned { view.animateNextFollow = true }
+            if parent.pinned && !wasPinned {
+                view.cancelScrollAnimation()
+                view.animateNextFollow = true
+            }
             if !parent.pinned {
                 view.animateNextFollow = false
-                if view.isFollowingAnimation {
-                    view.text.setContentOffset(view.text.contentOffset, animated: false)
-                    view.isFollowingAnimation = false
-                }
+                if wasPinned { view.cancelScrollAnimation() }
             }
             wasPinned = parent.pinned
             view.follow = parent.pinned
@@ -89,10 +107,10 @@ struct TerminalViewport: UIViewRepresentable {
             sourceHistory = parent.history; sourceScreen = parent.screen; style = parent.preferences; revision += 1
             renderLatest()
         }
-        private func renderLatest() {
+        fileprivate func renderLatest() {
             // TextKit edits and offset restoration can cancel native deceleration.
             // Keep only the latest source while the user drags or coasts.
-            guard !rendering, revision != appliedRevision, let view, !view.isUserScrolling, !view.isFollowingAnimation,
+            guard !rendering, revision != appliedRevision, let view, !view.isUserScrolling, !view.isAnimatingScroll,
                   let prefs = style else { return }
             rendering = true
             let revision = revision, history = sourceHistory, screen = sourceScreen
@@ -108,7 +126,7 @@ struct TerminalViewport: UIViewRepresentable {
                 if !history.isEmpty && !history.hasSuffix("\n") { result.append(NSAttributedString(string: "\n")) }
                 let historyLength = result.length
                 let renderedScreen = TerminalText.parse(screen, size: CGFloat(prefs.fontSize), spacing: CGFloat(prefs.lineSpacing) / 100, wrap: prefs.wrap)
-                let prompts = self.cachedPrompts + TerminalPrompt.scan(renderedScreen, plainTranscript: !screen.contains("\u{1b}") && !screen.contains("────"), startingAt: historyLength)
+                let prompts = self.cachedPrompts + TerminalPrompt.scan(renderedScreen, plainTranscript: !screen.contains("\u{1b}") && !screen.contains("────"), startingAt: historyLength, liveScreen: true)
                 result.append(renderedScreen)
                 // Horizontal scrolling preserves the desktop columns. Layout remains native TextKit 2.
                 let width = prefs.wrap ? 0 : max(self.cachedWidth, renderedScreen.maximumLineWidth())
@@ -117,7 +135,8 @@ struct TerminalViewport: UIViewRepresentable {
                     self.rendering = false
                     guard self.style == prefs else { self.renderLatest(); return }
                     // A swipe may have started while ANSI parsing was off the main thread.
-                    guard let view = self.view, !view.isUserScrolling, !view.isFollowingAnimation else { return }
+                    guard let view = self.view, !view.isUserScrolling, !view.isAnimatingScroll else { return }
+                    self.applyingFrame = true
                     view.documentWidth = prefs.wrap ? 0 : ceil(width) + 32
                     let text = view.text, offset = text.contentOffset, selection = text.selectedRange
                     let old = text.attributedText ?? NSAttributedString(string: "")
@@ -141,6 +160,7 @@ struct TerminalViewport: UIViewRepresentable {
                     view.setNeedsLayout(); view.layoutIfNeeded()
                     if self.parent.pinned { view.followBottom() }
                     else if text.contentOffset != offset { text.setContentOffset(offset, animated: false) }
+                    self.applyingFrame = false
                     self.updatePills()
                     // Apply completed frames even while newer output arrives. Dropping every
                     // older frame would freeze a busy session until its output paused.
@@ -150,6 +170,12 @@ struct TerminalViewport: UIViewRepresentable {
         }
         private func updatePills() {
             guard let view else { return }
+            if view.bottomButton.isHidden != view.follow {
+                view.bottomButton.isHidden = view.follow
+                view.setNeedsLayout()
+            }
+            // Ignore offsets from text replacement until the viewport is restored.
+            guard !applyingFrame else { return }
             var after = prompts.count
             var before = after - 1
             if !view.follow && !prompts.isEmpty {
@@ -157,13 +183,9 @@ struct TerminalViewport: UIViewRepresentable {
                     before = current - 1
                     after = current + 1
                 } else {
-                    let text = view.text
-                    let point = CGPoint(x: text.textContainerInset.left, y: text.contentOffset.y + 1)
-                    if let position = text.closestPosition(to: point) {
-                        let offset = text.offset(from: text.beginningOfDocument, to: position)
-                        after = prompts.firstIndex { $0.offset >= offset } ?? prompts.count
-                        before = after - 1
-                    }
+                    guard let index = firstPromptAtOrBelowTop(of: view.text) else { return }
+                    after = index
+                    before = after - 1
                 }
             }
             for (button, index, label) in [(view.previous, before, "Previous prompt"), (view.nextPrompt, after, "Next prompt")] {
@@ -172,13 +194,29 @@ struct TerminalViewport: UIViewRepresentable {
                 let title = "\(label)   \(index + 1)/\(prompts.count)"
                 button.tag = index
                 if button.configuration?.title != title || button.configuration?.subtitle != prompt.excerpt {
-                    button.configuration?.title = title
-                    button.configuration?.subtitle = prompt.excerpt
+                    var configuration = button.configuration
+                    configuration?.title = title
+                    configuration?.subtitle = prompt.excerpt
+                    UIView.performWithoutAnimation { button.configuration = configuration }
                     button.accessibilityLabel = "\(label), \(index + 1) of \(prompts.count), \(prompt.excerpt)"
                     view.setNeedsLayout()
                 }
                 button.isHidden = false
             }
+        }
+        // Use the same caret geometry as a prompt jump. Asking UITextView for the
+        // closest insertion point can return the end of a long transcript.
+        private func firstPromptAtOrBelowTop(of text: UITextView) -> Int? {
+            let top = text.bounds.minY + 1
+            var lower = 0, upper = prompts.count
+            while lower < upper {
+                let middle = lower + (upper - lower) / 2
+                guard let position = text.position(from: text.beginningOfDocument, offset: prompts[middle].offset) else { return nil }
+                let caret = text.caretRect(for: position)
+                guard !caret.isNull, !caret.isEmpty else { return nil }
+                if caret.minY < top { lower = middle + 1 } else { upper = middle }
+            }
+            return lower
         }
         @objc func jump(_ button: UIButton) {
             guard let view, prompts.indices.contains(button.tag) else { return }
@@ -190,9 +228,22 @@ struct TerminalViewport: UIViewRepresentable {
             parent.pinned = false
             let y = text.caretRect(for: pos).minY - 6
             let maxY = max(0, text.contentSize.height - text.bounds.height + text.adjustedContentInset.bottom)
-            text.setContentOffset(CGPoint(x: 0, y: min(maxY, max(0, y))), animated: false)
             view.setContentOffset(.zero, animated: false)
+            view.scroll(to: CGPoint(x: 0, y: min(maxY, max(0, y))), animated: true)
             updatePills()
+            renderLatest()
+        }
+        @objc func jumpToBottom() {
+            guard let view else { return }
+            selected = nil
+            parent.pinned = true
+            view.follow = true
+            wasPinned = true
+            view.cancelScrollAnimation()
+            view.animateNextFollow = true
+            view.followBottom()
+            updatePills()
+            renderLatest()
         }
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             if scrollView === view?.text { updatePills() }
@@ -200,8 +251,9 @@ struct TerminalViewport: UIViewRepresentable {
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
             if scrollView === view?.text {
                 selected = nil
-                view?.follow = false; view?.animateNextFollow = false; view?.isFollowingAnimation = false
+                view?.follow = false; view?.animateNextFollow = false; view?.cancelScrollAnimation()
                 wasPinned = false; parent.pinned = false
+                updatePills()
             }
         }
         #if DEBUG
@@ -214,18 +266,15 @@ struct TerminalViewport: UIViewRepresentable {
             }
         }
         #endif
-        func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
-            guard scrollView === view?.text else { return }
-            view?.isFollowingAnimation = false
-            if parent.pinned { view?.followBottom() }
-            renderLatest()
-        }
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { finishScrolling(scrollView) }
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
             if !decelerate { finishScrolling(scrollView) }
         }
         private func finishScrolling(_ scrollView: UIScrollView) {
-            repin(scrollView)
+            if scrollView === view?.text {
+                repin(scrollView)
+                updatePills()
+            }
             if parent.pinned { view?.followBottom() }
             renderLatest()
         }
@@ -247,6 +296,12 @@ struct TerminalViewport: UIViewRepresentable {
 final class TerminalScrollView: UIScrollView {
     let text = UITextView(usingTextLayoutManager: true)
     let previous = TerminalScrollView.promptButton(), nextPrompt = TerminalScrollView.promptButton()
+    let bottomButton: UIButton = {
+        let button = promptButton()
+        button.configuration?.image = UIImage(systemName: "arrow.down.to.line")
+        button.accessibilityLabel = "Scroll to bottom"
+        return button
+    }()
     private static func promptButton() -> UIButton {
         var config = UIButton.Configuration.filled()
         config.cornerStyle = .fixed
@@ -277,9 +332,13 @@ final class TerminalScrollView: UIScrollView {
     var documentWidth: CGFloat = 0
     var follow = true
     var animateNextFollow = false
-    var isFollowingAnimation = false
+    private var displayLink: CADisplayLink?
+    private var startOffset = CGPoint.zero, endOffset = CGPoint.zero
+    private var startTime: CFTimeInterval = 0
+    var onScrollAnimationEnd: (() -> Void)?
+    var isAnimatingScroll: Bool { displayLink != nil }
     var isUserScrolling: Bool { isDragging || isDecelerating || text.isDragging || text.isDecelerating }
-    override init(frame: CGRect) { super.init(frame: frame); addSubview(text); addSubview(previous); addSubview(nextPrompt); alwaysBounceHorizontal = false; showsVerticalScrollIndicator = false }
+    override init(frame: CGRect) { super.init(frame: frame); addSubview(text); addSubview(previous); addSubview(nextPrompt); addSubview(bottomButton); alwaysBounceHorizontal = false; showsVerticalScrollIndicator = false }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -287,22 +346,51 @@ final class TerminalScrollView: UIScrollView {
         let frame = CGRect(x: 0, y: 0, width: width, height: bounds.height)
         if text.frame != frame { text.frame = frame }
         if contentSize != frame.size { contentSize = frame.size }
+        bottomButton.frame = CGRect(x: bounds.maxX - 50, y: bounds.maxY - 50, width: 44, height: 44)
         for button in [previous, nextPrompt] where !button.isHidden {
             let size = button.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: 48))
             let width = min(size.width, min(260, bounds.width * 0.54)), height = max(44, size.height)
-            button.frame = CGRect(x: bounds.maxX - width - 6,
+            let trailing = button === nextPrompt && !bottomButton.isHidden ? bottomButton.frame.minX - 6 : bounds.maxX - 6
+            button.frame = CGRect(x: trailing - width,
                                   y: button === previous ? bounds.minY + 6 : bounds.maxY - height - 6,
                                   width: width, height: height)
         }
     }
     func followBottom() {
-        guard !isUserScrolling, !isFollowingAnimation else { return }
+        guard !isUserScrolling, !isAnimatingScroll else { return }
         let offset = CGPoint(x: 0, y: max(-text.adjustedContentInset.top, text.contentSize.height - text.bounds.height + text.adjustedContentInset.bottom))
-        let animate = animateNextFollow && !UIAccessibility.isReduceMotionEnabled
+        let animate = animateNextFollow
         animateNextFollow = false
-        if text.contentOffset != offset {
-            isFollowingAnimation = animate
-            text.setContentOffset(offset, animated: animate)
+        scroll(to: offset, animated: animate)
+    }
+    func cancelScrollAnimation() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+    func scroll(to offset: CGPoint, animated: Bool) {
+        cancelScrollAnimation()
+        guard text.contentOffset != offset else { return }
+        guard animated, !UIAccessibility.isReduceMotionEnabled else {
+            text.setContentOffset(offset, animated: false)
+            return
+        }
+        startOffset = text.contentOffset
+        endOffset = offset
+        startTime = CACurrentMediaTime()
+        let link = CADisplayLink(target: self, selector: #selector(advanceScroll(_:)))
+        displayLink = link
+        link.add(to: .main, forMode: .common)
+    }
+    @objc private func advanceScroll(_ link: CADisplayLink) {
+        let progress = min(1, max(0, (link.targetTimestamp - startTime) / 0.35))
+        let remaining = 1 - progress
+        let eased = 1 - remaining * remaining * remaining
+        text.setContentOffset(CGPoint(x: startOffset.x + (endOffset.x - startOffset.x) * eased,
+                                      y: startOffset.y + (endOffset.y - startOffset.y) * eased), animated: false)
+        if progress == 1 {
+            cancelScrollAnimation()
+            if follow { followBottom() }
+            onScrollAnimationEnd?()
         }
     }
 }
